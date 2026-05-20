@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: movie-bot
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "10001:10001"
+    volumes:
+      - ./logs:/app/logs
+      - ./autodelete.sqlite:/app/autodelete.sqlite
