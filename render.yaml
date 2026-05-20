@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: autofilterbot
+    env: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: BOT_TOKEN
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: ADMINS
+        sync: false
+      - key: FILE_CHANNELS
+        sync: false
+      - key: APP_ID
+        sync: false
+      - key: APP_HASH
+        sync: false
+      - key: LOG_LEVEL
+        value: info

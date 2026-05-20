@@ -1,0 +1,88 @@
+package conversation
+
+import (
+	"slices"
+	"sync"
+
+	"github.com/PaulSonOfLars/gotgbot/v2"
+	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters"
+)
+
+// Listener contains data to filter incoming updates and handle them.
+type Listener struct {
+	filter      filters.Message
+	messageChan chan *gotgbot.Message
+	ChatId      int64
+	UserId      int64
+}
+
+// NewListener creates a new listener with given filter and message chan.
+func NewListener(f filters.Message, c chan *gotgbot.Message, chatId, userId int64) *Listener {
+	return &Listener{
+		filter:      f,
+		messageChan: c,
+		ChatId:      chatId,
+		UserId:      userId,
+	}
+}
+
+// ListenerArray is a thread-safe interface for working with an array of listener.
+type ListenerArray struct {
+	mu   sync.RWMutex
+	list []*Listener
+}
+
+// NewListenerArray creates a new empty ListenerArray.
+func NewListenerArray() *ListenerArray {
+	return &ListenerArray{list: make([]*Listener, 0)}
+}
+
+// Add adds a listener to the listener.
+func (ls *ListenerArray) Add(l *Listener) {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	ls.list = append(ls.list, l)
+}
+
+// FindMatchAndDelete finds a listener with a matching filter and deletes it, returning the listener.
+func (ls *ListenerArray) FindMatchAndDelete(m *gotgbot.Message) (*Listener, bool) {
+	for i, l := range ls.list {
+		if !l.filter(m) {
+			continue
+		}
+
+		ls.mu.Lock()
+
+		ls.list = slices.Delete(ls.list, i, i+1)
+
+		ls.mu.Unlock()
+
+		return l, true
+	}
+
+	return nil, false
+}
+
+// Delete deletes listener at index i.
+func (ls *ListenerArray) Delete(i int) {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	ls.list = slices.Delete(ls.list, i, i+1)
+}
+
+// Cancel finds and deletes all listeners for a given user in a chat.
+func (ls *ListenerArray) Cancel(chatId, userId int64) bool {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+
+	found := false
+	for i := 0; i < len(ls.list); i++ {
+		l := ls.list[i]
+		if l.ChatId == chatId && l.UserId == userId {
+			ls.list = slices.Delete(ls.list, i, i+1)
+			i-- // adjust index after deletion
+			found = true
+		}
+	}
+	return found
+}

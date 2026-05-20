@@ -1,0 +1,53 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+autofilterbot
+autofilterbot_stable
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+# .env.sample is UN-ignored so it can be committed as a template
+
+# app logs
+logs/
+*.log
+
+# database
+*.sqlite
+*.db
+
+# json cache folders
+.results/
+.batch/
+
+# dev notes
+notes.txt
+
+# IDE configs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Scratch folder
+scratch/

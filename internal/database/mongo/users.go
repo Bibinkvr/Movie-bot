@@ -1,0 +1,115 @@
+package mongo
+
+import (
+	"time"
+	"autofilterbot/internal/database"
+	"autofilterbot/internal/model"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+)
+
+// SaveUser creates a new document in the user collection with the user id.
+func (c *Client) SaveUser(userId int64) error {
+	_, err := c.userCollection.InsertOne(c.ctx, model.User{UserId: userId})
+	if err != nil && !mongo.IsDuplicateKeyError(err) {
+		return err
+	}
+	return nil
+}
+
+// SaveUserExtended saves a user with additional metadata like source and DC.
+func (c *Client) SaveUserExtended(userId int64, source string, dc int, lang string) error {
+	filter := idFilter(userId)
+	update := bson.M{
+		"$setOnInsert": bson.M{
+			"_id":        userId,
+			"source":     source,
+			"dc":         dc,
+			"lang":       lang,
+			"created_at": time.Now().Unix(),
+		},
+	}
+	// If country is provided via lang mapping later, it can be updated.
+	// For now, we set it on insert if possible.
+	opts := options.Update().SetUpsert(true)
+	_, err := c.userCollection.UpdateOne(c.ctx, filter, update, opts)
+	return err
+}
+
+// UpdateUserCountry updates the country field for a user.
+func (c *Client) UpdateUserCountry(userId int64, country string) error {
+	filter := idFilter(userId)
+	update := bson.M{"$set": bson.M{"country": country}}
+	_, err := c.userCollection.UpdateOne(c.ctx, filter, update)
+	return err
+}
+
+// IncrementUserLangStat increments the count for a language for a specific user.
+func (c *Client) IncrementUserLangStat(userId int64, lang string) error {
+	filter := idFilter(userId)
+	update := bson.M{"$inc": bson.M{"lang_stats." + lang: 1}}
+	_, err := c.userCollection.UpdateOne(c.ctx, filter, update)
+	return err
+}
+
+// GetUser fetches a user from the database by id.
+func (c *Client) GetUser(userId int64) (*model.User, error) {
+	var u model.User
+
+	res := c.userCollection.FindOne(c.ctx, idFilter(userId))
+	if err := res.Err(); err != nil {
+		if err == mongo.ErrNoDocuments {
+			return &model.User{UserId: userId}, nil
+		}
+		return nil, err
+	}
+
+	err := res.Decode(&u)
+
+	return &u, err
+}
+
+// DeleteUser deletes a user by their id.
+func (c *Client) DeleteUser(userId int64) error {
+	_, err := c.userCollection.DeleteOne(c.ctx, idFilter(userId))
+	return err
+}
+
+// GetAllUsers return a cursor to loop over all users.
+func (c *Client) GetAllUsers() (database.Cursor, error) {
+	return c.userCollection.Find(c.ctx, bson.M{})
+}
+
+// idFilter creates a basic bson filter to find documents with matching _id.
+func idFilter(id interface{}) bson.D {
+	return bson.D{{Key: "_id", Value: id}}
+}
+func (c *Client) SetUserLastAction(userId int64, action string) error {
+	filter := idFilter(userId)
+	update := bson.M{"$set": bson.M{"last_action": action}}
+	_, err := c.userCollection.UpdateOne(c.ctx, filter, update)
+	return err
+}
+
+func (c *Client) GetUserLastAction(userId int64) (string, error) {
+	user, err := c.GetUser(userId)
+	if err != nil {
+		return "", err
+	}
+	return user.LastAction, nil
+}
+func (c *Client) SetUserFsubMessage(userId int64, messageId int64) error {
+	filter := idFilter(userId)
+	update := bson.M{"$set": bson.M{"fsub_message_id": messageId}}
+	_, err := c.userCollection.UpdateOne(c.ctx, filter, update)
+	return err
+}
+
+func (c *Client) GetUserFsubMessage(userId int64) (int64, error) {
+	user, err := c.GetUser(userId)
+	if err != nil {
+		return 0, err
+	}
+	return user.FsubMessageID, nil
+}
