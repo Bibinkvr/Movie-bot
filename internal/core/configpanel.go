@@ -12,19 +12,34 @@ func Settings(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	m := ctx.Message
-
-	_, err := m.Reply(bot, "<b>⚙️ Cʟɪᴄᴋ Tʜᴇ Bᴜᴛᴛᴏɴ Bᴇʟᴏᴡ Tᴏ Oᴘᴇɴ Tʜᴇ Cᴏɴғɪɢ Pᴀɴᴇʟ 👇</b>", &gotgbot.SendMessageOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-				{{Text: "𝖮𝖯𝖤𝖭", CallbackData: "config"}},
-				{{Text: "🔙 Back", CallbackData: "admin:back"}},
-			},
+	text := "<b>⚙️ Cʟɪᴄᴋ Tʜᴇ Bᴜᴛᴛᴏɴ Bᴇʟᴏᴡ Tᴏ Oᴘᴇɴ Tʜᴇ Cᴏɴғɪɢ Pᴀɴᴇʟ 👇</b>"
+	markup := gotgbot.InlineKeyboardMarkup{
+		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+			{{Text: "𝖮𝖯𝖤𝖭", CallbackData: "config"}},
+			{{Text: "🔙 Back", CallbackData: "admin:back"}},
 		},
-		ParseMode: gotgbot.ParseModeHTML,
-	})
+	}
+
+	var err error
+	if ctx.CallbackQuery != nil {
+		_, _, err = ctx.CallbackQuery.Message.EditText(bot, text, &gotgbot.EditMessageTextOpts{
+			ReplyMarkup: markup,
+			ParseMode:   gotgbot.ParseModeHTML,
+		})
+	} else if ctx.Message != nil {
+		_, err = ctx.Message.Reply(bot, text, &gotgbot.SendMessageOpts{
+			ReplyMarkup: markup,
+			ParseMode:   gotgbot.ParseModeHTML,
+		})
+	} else {
+		_, err = bot.SendMessage(ctx.EffectiveChat.Id, text, &gotgbot.SendMessageOpts{
+			ReplyMarkup: markup,
+			ParseMode:   gotgbot.ParseModeHTML,
+		})
+	}
+
 	if err != nil {
-		_app.Log.Warn("send settings msg failed", zap.Error(err))
+		_app.Log.Warn("send/edit settings msg failed", zap.Error(err))
 	}
 
 	return nil

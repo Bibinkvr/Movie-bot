@@ -63,16 +63,8 @@ func (o *Operation) MessageProcessor(ctx context.Context, c chan []telegram.Mess
 
 				for _, attr := range doc.Attributes {
 					switch a := attr.(type) {
-					case *telegram.DocumentAttributeAnimated, *telegram.DocumentAttributeHasStickers, *telegram.DocumentAttributeImageSize, *telegram.DocumentAttributeSticker:
+					case *telegram.DocumentAttributeAnimated, *telegram.DocumentAttributeHasStickers, *telegram.DocumentAttributeImageSize, *telegram.DocumentAttributeSticker, *telegram.DocumentAttributeAudio:
 						unsupportedDocument = true
-					case *telegram.DocumentAttributeAudio:
-						if a.Voice {
-							fileType = model.FileTypeVoice
-							fileIDType = fileid.Voice
-						} else {
-							fileType = model.FileTypeAudio
-							fileIDType = fileid.Audio
-						}
 					case *telegram.DocumentAttributeVideo:
 						fileType = model.FileTypeVideo
 						fileIDType = fileid.Video
@@ -108,7 +100,7 @@ func (o *Operation) MessageProcessor(ctx context.Context, c chan []telegram.Mess
 				file := &model.File{
 					UniqueId: functions.RandString(15),
 					FileId:   fileID,
-					FileName: fileName,
+					FileName: functions.CleanPromoFromName(fileName),
 					FileType: fileType,
 					FileSize: int64(doc.Size),
 					Time:     int64(msg.Date),

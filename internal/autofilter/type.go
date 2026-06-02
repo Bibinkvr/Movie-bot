@@ -5,12 +5,16 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"autofilterbot/internal/functions"
 )
 
 var (
 	seasonEpisodeRegex = regexp.MustCompile(`(?i)\bs(\d+)\s?e(\d+)\b|\bseason\s?(\d+)\s?episode\s?(\d+)\b|\b(\d+)x(\d+)\b`)
-	qualityRegex       = regexp.MustCompile(`(?i)(\d{3,4}p|bluray|web-dl|webrip|hdtv|camrip|brrip|h264|h265|x264|x265)`)
+	qualityRegex       = regexp.MustCompile(`(?i)(\d{3,4}p|bluray|web-dl|webrip|hdtv|camrip|brrip|h264|h265|x264|x265|dvdrip|hdrip|tc|ts|scr|hevc|hq|dd5\.1)`)
 	seasonOnlyRegex    = regexp.MustCompile(`(?i)\bseason\s?(\d+)\b|\bs(\d+)\b`)
+	episodeOnlyRegex   = regexp.MustCompile(`(?i)\bepisode\s?(\d+)\b|\bep[._-]?\s?(\d+)\b|\be(\d{1,4})\b`)
+	yearRegex          = regexp.MustCompile(`\b(19\d\d|20[0-2]\d)\b`)
 )
 
 type MovieMetadata struct {
@@ -23,12 +27,19 @@ type SeriesMetadata struct {
 	Episode int
 }
 
-// DetectType returns "series" if at least one file follows a series pattern, else "movie".
+// DetectType returns "series" if at least 40% of the returned files follow a series pattern, else "movie".
 func DetectType(files []File) string {
+	if len(files) == 0 {
+		return "movie"
+	}
+	seriesCount := 0
 	for _, f := range files {
 		if IsSeriesFile(f.FileName) {
-			return "series"
+			seriesCount++
 		}
+	}
+	if float64(seriesCount)/float64(len(files)) >= 0.4 {
+		return "series"
 	}
 	return "movie"
 }
@@ -36,7 +47,9 @@ func DetectType(files []File) string {
 // IsSeriesFile returns true if the filename matches a season/episode pattern.
 func IsSeriesFile(name string) bool {
 	lower := strings.ToLower(name)
-	return seasonEpisodeRegex.MatchString(lower) || seasonOnlyRegex.MatchString(lower)
+	lower = strings.ReplaceAll(lower, "_", " ")
+	lower = strings.ReplaceAll(lower, ".", " ")
+	return seasonEpisodeRegex.MatchString(lower) || seasonOnlyRegex.MatchString(lower) || episodeOnlyRegex.MatchString(lower)
 }
 
 // GroupBySeason groups files by their season number.
@@ -52,6 +65,8 @@ func GroupBySeason(files []File) map[int][]File {
 // ExtractSeriesMetadata parses season and episode from filename.
 func ExtractSeriesMetadata(name string) (int, int) {
 	lower := strings.ToLower(name)
+	lower = strings.ReplaceAll(lower, "_", " ")
+	lower = strings.ReplaceAll(lower, ".", " ")
 	
 	var s, e int
 	matches := seasonEpisodeRegex.FindStringSubmatch(lower)
@@ -79,6 +94,17 @@ func ExtractSeriesMetadata(name string) (int, int) {
 			s, _ = strconv.Atoi(match[1])
 		} else if len(match) > 2 && match[2] != "" {
 			s, _ = strconv.Atoi(match[2])
+		}
+	}
+
+	// Fallback to episode only if no episode was found
+	if e == 0 {
+		match := episodeOnlyRegex.FindStringSubmatch(lower)
+		for idx := 1; idx < len(match); idx++ {
+			if match[idx] != "" {
+				e, _ = strconv.Atoi(match[idx])
+				break
+			}
 		}
 	}
 	
@@ -180,27 +206,24 @@ func IsGarbageFile(name string) bool {
 		return strings.Contains(lower, g)
 	})
 }
+var languageRegexes = map[string]*regexp.Regexp{
+	"Hindi":     regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(hindi|hin)(?:[^a-zA-Z0-9]|$)`),
+	"English":   regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(english|eng)(?:[^a-zA-Z0-9]|$)`),
+	"Tamil":     regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(tamil|tam)(?:[^a-zA-Z0-9]|$)`),
+	"Telugu":    regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(telugu|tel)(?:[^a-zA-Z0-9]|$)`),
+	"Malayalam": regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(malayalam|mal)(?:[^a-zA-Z0-9]|$)`),
+	"Kannada":   regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(kannada|kan)(?:[^a-zA-Z0-9]|$)`),
+	"Multi":     regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(multi|dual|mux)(?:[^a-zA-Z0-9]|$)`),
+}
+
 // DetectLanguages extracts available languages from the file list.
 func DetectLanguages(files []File) []string {
 	langs := make(map[string]bool)
-	patterns := map[string][]string{
-		"Hindi":     {"hindi", "hin"},
-		"English":   {"english", "eng"},
-		"Tamil":     {"tamil", "tam"},
-		"Telugu":    {"telugu", "tel"},
-		"Malayalam": {"malayalam", "mal"},
-		"Kannada":   {"kannada", "kan"},
-		"Multi":     {"multi", "dual", "mux"},
-	}
 
 	for _, f := range files {
-		lower := strings.ToLower(f.FileName)
-		for name, p := range patterns {
-			for _, s := range p {
-				if strings.Contains(lower, s) {
-					langs[name] = true
-					break
-				}
+		for name, regex := range languageRegexes {
+			if regex.MatchString(f.FileName) {
+				langs[name] = true
 			}
 		}
 	}
@@ -211,4 +234,64 @@ func DetectLanguages(files []File) []string {
 	}
 	slices.Sort(result)
 	return result
+}
+
+// ExtractBaseTitle extracts the clean base title from a filename by removing
+// quality tags, season/episode patterns, file extensions, and formatting artifacts.
+func ExtractBaseTitle(name string) string {
+	name = functions.CleanPromoFromName(name)
+	// Remove leading brackets/parentheses completely (e.g. [Cc], [Govt], etc.)
+	bracketRegex := regexp.MustCompile(`^(?i)(?:\[[^\]]+\]|\([^\)]+\))\s*`)
+	for {
+		loc := bracketRegex.FindString(name)
+		if loc == "" {
+			break
+		}
+		name = strings.TrimSpace(name[len(loc):])
+	}
+
+	// Remove file extension
+	if idx := strings.LastIndex(name, "."); idx != -1 {
+		ext := name[idx:]
+		if len(ext) <= 5 {
+			name = name[:idx]
+		}
+	}
+
+	lower := strings.ToLower(name)
+	lower = strings.ReplaceAll(lower, "_", " ")
+	lower = strings.ReplaceAll(lower, ".", " ")
+
+	// Find the earliest index of quality or season/episode patterns
+	cutIdx := len(name)
+
+	if loc := qualityRegex.FindStringIndex(lower); loc != nil && loc[0] < cutIdx {
+		cutIdx = loc[0]
+	}
+	if loc := seasonEpisodeRegex.FindStringIndex(lower); loc != nil && loc[0] < cutIdx {
+		cutIdx = loc[0]
+	}
+	if loc := seasonOnlyRegex.FindStringIndex(lower); loc != nil && loc[0] < cutIdx {
+		cutIdx = loc[0]
+	}
+	if loc := yearRegex.FindStringIndex(lower); loc != nil && loc[0] > 0 && loc[0] < cutIdx {
+		cutIdx = loc[0]
+	}
+
+	title := name[:cutIdx]
+
+	// Clean formatting
+	title = strings.ReplaceAll(title, ".", " ")
+	title = strings.ReplaceAll(title, "-", " ")
+	title = strings.ReplaceAll(title, "_", " ")
+	title = strings.TrimRight(title, "([]{}-_ ")
+	title = strings.TrimSpace(title)
+	title = strings.Join(strings.Fields(title), " ")
+
+	// Title case
+	if title != "" {
+		title = strings.Title(strings.ToLower(title))
+	}
+
+	return title
 }

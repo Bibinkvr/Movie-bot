@@ -33,3 +33,33 @@ func DetectCountry(langCode string) string {
 		return "Other"
 	}
 }
+
+// MapLanguageCode maps a Telegram language code to a language name.
+func MapLanguageCode(langCode string) string {
+	switch strings.ToLower(langCode) {
+	case "hi":
+		return "Hindi"
+	case "ta":
+		return "Tamil"
+	case "ml":
+		return "Malayalam"
+	case "te":
+		return "Telugu"
+	case "kn":
+		return "Kannada"
+	case "en":
+		return "English"
+	case "ar":
+		return "Arabic"
+	case "ru":
+		return "Russian"
+	case "uz":
+		return "Uzbek"
+	case "id":
+		return "Indonesian"
+	case "es":
+		return "Spanish"
+	default:
+		return "Unknown"
+	}
+}

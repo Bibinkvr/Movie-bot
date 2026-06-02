@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"autofilterbot/internal/model"
 )
 
 const progressTemplate = `
@@ -32,6 +34,21 @@ func (o *Operation) buildProgressMessage() *strings.Builder {
 	fmt.Fprintf(&builder, progressTemplate, progressBar, o.Saved, o.Failed, eta, o.ID, now, msgLink)
 
 	return &builder
+}
+
+// BuildProgressMessage returns the formatted progress message string.
+func (o *Operation) BuildProgressMessage() string {
+	return o.buildProgressMessage().String()
+}
+
+// NewTemporaryOperation creates a dummy Operation to format progress messages or access buttons.
+func NewTemporaryOperation(i *model.Index) *Operation {
+	return &Operation{
+		Index:            i,
+		startTime:        time.Now(),
+		startMessageID:   i.StartMessageID,
+		mtprotoChannelID: TDLibChannelIDToPlain(i.ChannelID),
+	}
 }
 
 // calculateRemainingTime calculates the remaining time until the Estimated Time of Arrival (ETA) based on the provided parameters.

@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"autofilterbot/internal/app"
 	"autofilterbot/internal/cache"
+	"autofilterbot/internal/config"
 	"autofilterbot/internal/configpanel"
 	"autofilterbot/internal/database/mongo"
 	"autofilterbot/internal/index"
@@ -149,6 +151,7 @@ func Run(opts RunAppOptions) {
 
 	_app.additionalURLsCount = len(additionalUri)
 	_app.ConfigPanel = configpanel.CreatePanel(_app)
+	_app.MigrateFsubLinks()
 
 	dispatcher := SetupDispatcher(logger)
 	updater := ext.NewUpdater(dispatcher, &ext.UpdaterOpts{
@@ -160,7 +163,7 @@ func Run(opts RunAppOptions) {
 	err = updater.StartPolling(bot, &ext.PollingOpts{
 		DropPendingUpdates: true,
 		GetUpdatesOpts: &gotgbot.GetUpdatesOpts{
-			AllowedUpdates: []string{"message", "channel_post", "inline_query", "chosen_inline_result", "callback_query", "chat_join_request"},
+			AllowedUpdates: []string{"message", "channel_post", "inline_query", "chosen_inline_result", "callback_query", "chat_join_request", "chat_member"},
 		},
 	})
 	if err != nil {
@@ -307,3 +310,76 @@ func containsI64(s []int64, val int64) bool {
 	}
 	return false
 }
+
+// AddFileChannel adds a channel ID to the list of monitored channels in the database config.
+func (core *Core) AddFileChannel(channelId int64) error {
+	// Check if already in DB config
+	for _, id := range core.Config.FileChannels {
+		if id == channelId {
+			return nil
+		}
+	}
+	// Check if already in env FILE_CHANNELS
+	for _, id := range env.Int64s("FILE_CHANNELS") {
+		if id == channelId {
+			return nil
+		}
+	}
+
+	newChannels := append(core.Config.FileChannels, channelId)
+	err := core.DB.UpdateConfig(core.Bot.Id, "file_channels", newChannels)
+	if err != nil {
+		core.Log.Error("AddFileChannel: failed to update config in DB", zap.Error(err))
+		return err
+	}
+
+	core.RefreshConfig()
+	core.Log.Info("automatically added channel to monitored channels", zap.Int64("channel_id", channelId))
+	return nil
+}
+
+// MigrateFsubLinks scans all ForceSub channels and updates them to request invite links if they aren't already.
+func (core *Core) MigrateFsubLinks() {
+	channels := core.Config.GetFsubChannels()
+	if len(channels) == 0 {
+		return
+	}
+
+	updated := false
+	for i, ch := range channels {
+		// If CreatesJoinRequest is false, or if invite link is empty, or doesn't look like a request link (contains no '+')
+		if !ch.CreatesJoinRequest || ch.InviteLink == "" || !strings.Contains(ch.InviteLink, "+") {
+			chat, err := core.Bot.GetChat(ch.ID, nil)
+			if err != nil {
+				core.Log.Warn("MigrateFsubLinks: failed to get chat info", zap.Int64("chat_id", ch.ID), zap.Error(err))
+				continue
+			}
+
+			// Generate a request invite link (creates join request)
+			link, err := core.Bot.CreateChatInviteLink(ch.ID, &gotgbot.CreateChatInviteLinkOpts{
+				Name:               "ForceSub",
+				CreatesJoinRequest: true,
+			})
+			if err != nil {
+				core.Log.Warn("MigrateFsubLinks: failed to create request invite link. Make sure bot is Admin!", zap.Int64("chat_id", ch.ID), zap.Error(err))
+				continue
+			}
+
+			channels[i].InviteLink = link.InviteLink
+			channels[i].CreatesJoinRequest = true
+			channels[i].Title = chat.Title
+			updated = true
+			core.Log.Info("MigrateFsubLinks: successfully migrated channel to request invite link", zap.Int64("chat_id", ch.ID), zap.String("link", link.InviteLink))
+		}
+	}
+
+	if updated {
+		err := core.DB.UpdateConfig(core.Bot.Id, config.FieldNameFsub, channels)
+		if err != nil {
+			core.Log.Error("MigrateFsubLinks: failed to save migrated config to DB", zap.Error(err))
+		} else {
+			core.RefreshConfig()
+		}
+	}
+}
+

@@ -33,17 +33,11 @@ func FileFromMessage(m *gotgbot.Message) *model.File {
 		fileName = m.Video.FileName
 		fileSize = m.Video.FileSize
 		fileType = model.FileTypeVideo
-	case m.Audio != nil:
-		fileId = m.Audio.FileId
-		uniqueId = m.Audio.FileUniqueId
-		fileName = m.Audio.FileName
-		fileSize = m.Audio.FileSize
-		fileType = model.FileTypeAudio
 	default:
 		return nil
 	}
 
-	fileName = RemoveSymbols(RemoveExtension(fileName))
+	fileName = RemoveSymbols(CleanPromoFromName(RemoveExtension(fileName)))
 
 	return &model.File{
 		UniqueId:    uniqueId,

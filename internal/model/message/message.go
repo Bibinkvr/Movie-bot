@@ -1,6 +1,8 @@
 package message
 
 import (
+	"strings"
+
 	"autofilterbot/internal/button"
 	"autofilterbot/internal/format"
 	"autofilterbot/internal/model"
@@ -41,5 +43,10 @@ func (m Message) Send(bot *gotgbot.Bot, chatId int64, opts ...*gotgbot.SendMessa
 
 	sendOpts.LinkPreviewOptions = &gotgbot.LinkPreviewOptions{IsDisabled: true}
 
-	return bot.SendMessage(chatId, m.Text, sendOpts)
+	res, err := bot.SendMessage(chatId, m.Text, sendOpts)
+	if err != nil && strings.Contains(err.Error(), "EFFECT_ID_INVALID") {
+		sendOpts.MessageEffectId = ""
+		return bot.SendMessage(chatId, m.Text, sendOpts)
+	}
+	return res, err
 }

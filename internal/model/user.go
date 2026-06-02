@@ -28,8 +28,11 @@ type User struct {
 
 // FsubStats contains analytics for a single fsub channel.
 type FsubStats struct {
-	TotalRequests int64
-	BotUsers      int64
-	Requested     int64
-	Joined        int64
+	TotalRequests   int64
+	BotUsers        int64
+	Requested       int64
+	Joined          int64
+	DailyRequests   int64
+	WeeklyRequests  int64
+	MonthlyRequests int64
 }

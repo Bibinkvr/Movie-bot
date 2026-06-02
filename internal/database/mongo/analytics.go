@@ -41,13 +41,15 @@ func (c *Client) UpdateUserLastSeen(userId int64) error {
 }
 
 // GetUserAnalytics performs aggregations for the stats dashboard.
-func (c *Client) GetUserAnalytics() (total, newToday, active24h int64, countries map[string]int64, err error) {
+func (c *Client) GetUserAnalytics() (total, newToday, active24h, activeWeekly, activeMonthly int64, countries map[string]int64, err error) {
 	now := time.Now()
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
 	twentyFourHoursAgo := now.Add(-24 * time.Hour).Unix()
+	sevenDaysAgo := now.Add(-7 * 24 * time.Hour).Unix()
+	thirtyDaysAgo := now.Add(-30 * 24 * time.Hour).Unix()
 
 	// Total Users
-	total, err = c.userCollection.EstimatedDocumentCount(c.ctx)
+	total, err = c.userCollection.CountDocuments(c.ctx, bson.M{})
 	if err != nil {
 		return
 	}
@@ -64,10 +66,22 @@ func (c *Client) GetUserAnalytics() (total, newToday, active24h int64, countries
 		return
 	}
 
+	// Active Weekly
+	activeWeekly, err = c.userCollection.CountDocuments(c.ctx, bson.M{"last_search_at": bson.M{"$gte": sevenDaysAgo}})
+	if err != nil {
+		return
+	}
+
+	// Active Monthly
+	activeMonthly, err = c.userCollection.CountDocuments(c.ctx, bson.M{"last_search_at": bson.M{"$gte": thirtyDaysAgo}})
+	if err != nil {
+		return
+	}
+
 	// Country Distribution
 	countries = make(map[string]int64)
 	pipeline := []bson.M{
-		{"$group": bson.M{"_id": "$country", "count": bson.M{"$sum": 1}}},
+		{"$group": bson.M{"_id": bson.M{"$ifNull": []interface{}{"$country", "Other"}}, "count": bson.M{"$sum": 1}}},
 		{"$sort": bson.M{"count": -1}},
 	}
 	cursor, err := c.userCollection.Aggregate(c.ctx, pipeline)
@@ -123,6 +137,25 @@ func (c *Client) GetFsubAnalytics(channelID int64) (model.FsubStats, error) {
 
 	// 3. Bot Users Count
 	s.BotUsers, _ = c.userCollection.CountDocuments(c.ctx, bson.M{})
+
+	// 4. Daily, Weekly, and Monthly stats
+	now := time.Now()
+	twentyFourHoursAgo := now.Add(-24 * time.Hour).Unix()
+	sevenDaysAgo := now.Add(-7 * 24 * time.Hour).Unix()
+	thirtyDaysAgo := now.Add(-30 * 24 * time.Hour).Unix()
+
+	s.DailyRequests, _ = c.joinRequestsLogsCollection.CountDocuments(c.ctx, bson.M{
+		"channel_id":   channelID,
+		"requested_at": bson.M{"$gte": twentyFourHoursAgo},
+	})
+	s.WeeklyRequests, _ = c.joinRequestsLogsCollection.CountDocuments(c.ctx, bson.M{
+		"channel_id":   channelID,
+		"requested_at": bson.M{"$gte": sevenDaysAgo},
+	})
+	s.MonthlyRequests, _ = c.joinRequestsLogsCollection.CountDocuments(c.ctx, bson.M{
+		"channel_id":   channelID,
+		"requested_at": bson.M{"$gte": thirtyDaysAgo},
+	})
 
 	return s, nil
 }

@@ -90,7 +90,7 @@ func ResendMessage(bot *gotgbot.Bot, msg *gotgbot.Message, chatID int64) (*gotgb
 			IsAnonymous:           &msg.Poll.IsAnonymous,
 			Type:                  msg.Poll.Type,
 			AllowsMultipleAnswers: msg.Poll.AllowsMultipleAnswers,
-			CorrectOptionId:       msg.Poll.CorrectOptionId,
+			CorrectOptionIds:      msg.Poll.CorrectOptionIds,
 			Explanation:           msg.Poll.Explanation,
 			ExplanationEntities:   msg.Poll.ExplanationEntities,
 			OpenPeriod:            msg.Poll.OpenPeriod,

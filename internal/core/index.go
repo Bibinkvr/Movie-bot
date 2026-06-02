@@ -163,6 +163,10 @@ func CmdIndex(bot *gotgbot.Bot, ctx *ext.Context) error {
 
 		return nil
 	}
+
+	// Automatically save index channel to monitored channels
+	_ = _app.AddFileChannel(channelId)
+
 	plainChannelID := index.TDLibChannelIDToPlain(channelId)
 
 	text := fmt.Sprintf(`

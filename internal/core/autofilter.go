@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"slices"
 	"strconv"
@@ -23,17 +24,6 @@ import (
 )
 
 func Autofilter(bot *gotgbot.Bot, ctx *ext.Context) error {
-	// 1. FSub check
-	isPrivate := ctx.EffectiveChat.Type == "private"
-	if isPrivate {
-		ok, err := fsub.CheckFsub(_app, bot, ctx)
-		if err != nil {
-			_app.Log.Warn("autofilter: check fsub failed", zap.Error(err))
-		}
-		if !ok {
-			return nil
-		}
-	}
 
 	// 2. Wrap search in a job and push to queue
 	job := Job{
@@ -46,6 +36,15 @@ func Autofilter(bot *gotgbot.Bot, ctx *ext.Context) error {
 			}
 			if msg != nil && _app.Config.GetAutodeleteTime() != 0 {
 				_app.AutoDelete.SaveMessage(msg, time.Minute*time.Duration(_app.Config.AutodeleteTime))
+			}
+			if ctx.CallbackQuery != nil {
+				c := ctx.CallbackQuery
+				callbackData := callbackdata.FromString(c.Data)
+				if callbackData.Path[0] == "suggest" || callbackData.Path[0] == "reset" {
+					if m, ok := c.Message.(*gotgbot.Message); ok {
+						_, _ = m.Delete(bot, nil)
+					}
+				}
 			}
 			return nil
 		},
@@ -83,8 +82,25 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 		c := ctx.CallbackQuery
 
 		callbackData := callbackdata.FromString(c.Data)
-		if callbackData.Path[0] == "suggest" || callbackData.Path[0] == "reset" {
-			query = callbackData.Args[0]
+		if callbackData.Path[0] == "suggest" || callbackData.Path[0] == "reset" || callbackData.Path[0] == "trend" {
+			if len(callbackData.Args) >= 2 {
+				lastIdx := len(callbackData.Args) - 1
+				userId, err := strconv.ParseInt(callbackData.Args[lastIdx], 10, 64)
+				if err == nil {
+					if callbackData.Path[0] != "trend" && c.From.Id != userId {
+						_, err := c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{
+							Text:      "You Can't Use This Button!",
+							ShowAlert: true,
+						})
+						return nil, err
+					}
+					query = strings.Join(callbackData.Args[:lastIdx], "_")
+				} else {
+					query = strings.Join(callbackData.Args, "_")
+				}
+			} else if len(callbackData.Args) == 1 {
+				query = callbackData.Args[0]
+			}
 			inputMessage = c.Message
 			fromUser = &c.From
 		} else {
@@ -131,7 +147,28 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 			return nil, nil
 		}
 
-		if autofilter.IsBadQuery(text, m.Entities) {
+		fromStartSearch := false
+		if strings.HasPrefix(text, "/start ") {
+			args := strings.Split(text, " ")
+			if len(args) > 1 {
+				// Try RawURLEncoding first (new standard)
+				decodedBytes, err := base64.RawURLEncoding.DecodeString(args[1])
+				// Fallback to StdEncoding for any older generated links
+				if err != nil {
+					decodedBytes, err = base64.StdEncoding.DecodeString(args[1])
+				}
+				
+				if err == nil {
+					decoded := string(decodedBytes)
+					if len(decoded) > 1 && decoded[0] == 's' {
+						text = decoded[1:]
+						fromStartSearch = true
+					}
+				}
+			}
+		}
+
+		if !fromStartSearch && autofilter.IsBadQuery(text, m.Entities) {
 			_app.Log.Debug("autofilter: bad query", zap.String("text", text), zap.Any("entities", m.Entities))
 			return nil, nil
 		}
@@ -146,12 +183,40 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 		return nil, nil
 	}
 
-	// 3. Track search language stats
+	// 3. Track search language stats & user analytics
 	go func() {
-		lang := functions.DetectLanguage(query)
-		if lang != "" {
-			_app.DB.IncrementGlobalLangStat(_app.Config.BotId, lang)
-			_app.DB.IncrementUserLangStat(fromUser.Id, lang)
+		if fromUser != nil {
+			lang := functions.DetectLanguage(query)
+			if lang == "Unknown" && fromUser.LanguageCode != "" {
+				lang = functions.MapLanguageCode(fromUser.LanguageCode)
+			}
+			if lang != "" {
+				_app.DB.IncrementGlobalLangStat(_app.Config.BotId, lang)
+				_app.DB.IncrementUserLangStat(fromUser.Id, lang)
+			}
+
+			if query != "" {
+				_app.DB.TrackSearch(query)
+			}
+
+			isPrivate := false
+			if ctx.Message != nil && ctx.Message.Chat.Type == "private" {
+				isPrivate = true
+			} else if ctx.CallbackQuery != nil && ctx.CallbackQuery.Message != nil && ctx.CallbackQuery.Message.GetChat().Type == "private" {
+				isPrivate = true
+			}
+
+			source := "group_search"
+			if isPrivate {
+				source = "pm_search"
+			}
+
+			err := _app.DB.SaveUserExtended(fromUser.Id, source, 0, fromUser.LanguageCode)
+			if err == nil {
+				country := functions.DetectCountry(fromUser.LanguageCode)
+				_app.DB.UpdateUserCountry(fromUser.Id, country)
+			}
+			_app.DB.UpdateUserLastSeen(fromUser.Id)
 		}
 	}()
 
@@ -177,48 +242,70 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 		})
 	}
 
+	files = processSearchResults(files)
+
 	if len(files) == 0 {
-		// Try a more relaxed search for spelling suggestions
-		var suggestion string
-		relaxedQuery := strings.ReplaceAll(query, " ", "")
-		if len(relaxedQuery) > 3 {
-			// Try a search with wildcards between characters
-			var wildcardQuery string
-			for _, r := range relaxedQuery {
-				wildcardQuery += string(r) + ".*"
-			}
-			cursor, err := _app.DB.SearchFiles(wildcardQuery)
-			if err == nil {
-				f, _ := autofilter.FilesFromCursor(context.Background(), cursor, _app.Config)
-				if len(f) > 0 && len(f[0]) > 0 {
-					suggestion = f[0][0].FileName
-				}
-			}
+		// 1. Try a local database fuzzy spelling search first (so suggestions are actual files in the DB)
+		localSugs, err := _app.DB.GetSpellingSuggestions(query)
+		var suggestions []string
+		if err == nil && len(localSugs) > 0 {
+			suggestions = localSugs
 		}
 
+		// 2. Fallback: Try external TMDB/OMDB suggestions if local suggestions are empty
+		if len(suggestions) == 0 {
+			suggestions = autofilter.GetSearchSuggestions(query)
+		}
+
+		if len(suggestions) > 0 {
+			text := fmt.Sprintf("I couldn't find anything for <b>%s</b>. Did you mean any of these below:", query)
+			if _app.Config.GetAutodeleteTime() != 0 {
+				text += fmt.Sprintf("\n\n<blockquote>○ 𝖠𝗎𝗍𝗈-𝖣𝖾𝗅𝖾𝗍𝖾: <b>%d 𝗆𝗂𝗇𝗌</b></blockquote>", _app.Config.GetAutodeleteTime())
+			}
+
+			buttons := [][]gotgbot.InlineKeyboardButton{}
+			for _, sug := range suggestions {
+				// Clean suggestion for actual query
+				cleanSug := strings.ReplaceAll(sug, "(", " ")
+				cleanSug = strings.ReplaceAll(cleanSug, ")", " ")
+				cleanSug = strings.ReplaceAll(cleanSug, "[", " ")
+				cleanSug = strings.ReplaceAll(cleanSug, "]", " ")
+				cleanSug = strings.Join(strings.Fields(cleanSug), " ")
+
+				// Truncate to fit callback query 64-byte limit:
+				// format: "suggest|" + cleanSug + "_" + userId
+				limit := 64 - len("suggest|") - len(fmt.Sprintf("_%d", fromUser.Id))
+				if len(cleanSug) > limit {
+					cleanSug = cleanSug[:limit]
+				}
+
+				buttons = append(buttons, []gotgbot.InlineKeyboardButton{{
+					Text:         sug,
+					CallbackData: fmt.Sprintf("suggest|%s_%d", cleanSug, fromUser.Id),
+				}})
+			}
+			// Close button at the bottom
+			buttons = append(buttons, []gotgbot.InlineKeyboardButton{button.Close(fromUser.Id)})
+
+			return bot.SendMessage(inputMessage.GetChat().Id, text, &gotgbot.SendMessageOpts{
+				ReplyParameters: &gotgbot.ReplyParameters{
+					MessageId: inputMessage.GetMessageId(),
+				},
+				ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
+				ParseMode:   gotgbot.ParseModeHTML,
+			})
+		}
+
+		// Absolute fallback: No suggestions at all
 		vals := _app.BasicMessageValues(ctx, map[string]any{"query": query})
 		text := format.KeyValueFormat(_app.Config.GetNoResultText(), vals)
+		if _app.Config.GetAutodeleteTime() != 0 {
+			text += fmt.Sprintf("\n\n<blockquote>○ 𝖠𝗎𝗍𝗈-𝖣𝖾𝗅𝖾𝗍𝖾: <b>%d 𝗆𝗂𝗇𝗌</b></blockquote>", _app.Config.GetAutodeleteTime())
+		}
 
 		buttons := [][]gotgbot.InlineKeyboardButton{
 			{{Text: "Sᴇᴀʀᴄʜ Oɴ Gᴏᴏɢʟᴇ 🔎", Url: fmt.Sprintf("https://google.com/?q=%s", query), Style: "primary"}},
 			{{Text: "Cᴏᴘʏ", CopyText: &gotgbot.CopyTextButton{Text: query}, Style: "primary"}, button.Close(fromUser.Id)},
-		}
-
-		if suggestion != "" {
-			text += fmt.Sprintf("\n\n<i>💡 D𝗂𝖽 𝗒𝗈𝗎 𝗆𝖾𝖺𝗇:</i> <b>%s</b> ?", suggestion)
-
-			// Sanitize and truncate suggestion for callback data to avoid BUTTON_DATA_INVALID (64 byte limit)
-			callbackQuery := autofilter.Sanitize(suggestion)
-			if len(callbackQuery) > 40 {
-				callbackQuery = callbackQuery[:40]
-			}
-
-			suggestBtn := gotgbot.InlineKeyboardButton{
-				Text:         fmt.Sprintf("🔎 Search: %s", suggestion),
-				CallbackData: fmt.Sprintf("suggest|%s_%d", callbackQuery, fromUser.Id),
-				Style:        "primary",
-			}
-			buttons = append([][]gotgbot.InlineKeyboardButton{{suggestBtn}}, buttons...)
 		}
 
 		return bot.SendMessage(inputMessage.GetChat().Id, text, &gotgbot.SendMessageOpts{
@@ -283,7 +370,12 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 	fileButtons := files[0].Process(inputMessage.GetChat().Id, bot.Username, _app.Config)
 
 	// Divider
-	buttons = append(buttons, []gotgbot.InlineKeyboardButton{{Text: "🌟 Latest Releases 🌟", CallbackData: "ignore", Style: "success"}})
+	latestReleasesBtn := gotgbot.InlineKeyboardButton{Text: "🌟 Latest Releases 🌟", CallbackData: "ignore", Style: "success"}
+	if _app.Config.LatestReleasesUrl != "" {
+		latestReleasesBtn.Url = _app.Config.LatestReleasesUrl
+		latestReleasesBtn.CallbackData = ""
+	}
+	buttons = append(buttons, []gotgbot.InlineKeyboardButton{latestReleasesBtn})
 
 	// Add file buttons
 	buttons = append(buttons, fileButtons...)
@@ -312,7 +404,7 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 
 	// Footer Action Row 2
 	buttons = append(buttons, []gotgbot.InlineKeyboardButton{
-		{Text: "📢 Share", SwitchInlineQuery: &query},
+		{Text: "📢 Share", SwitchInlineQuery: &query, Style: "success"},
 		{Text: "❌ Close", CallbackData: "close", Style: "danger"},
 		{Text: "♻️ Reset", CallbackData: "reset|" + query, Style: "primary"},
 	})
@@ -324,15 +416,74 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 		"results_count": len(allFiles),
 	}))
 
-	msg, err := bot.SendMessage(inputMessage.GetChat().Id, text, &gotgbot.SendMessageOpts{
-		ReplyParameters: &gotgbot.ReplyParameters{
+	var (
+		msg     *gotgbot.Message
+		sendErr error
+	)
+
+	resultsChannelID := _app.Config.GetResultsChannelID()
+	useResultsChannel := resultsChannelID != 0 && inputMessage.GetChat().Type != "private"
+	sendChatID := inputMessage.GetChat().Id
+	if useResultsChannel {
+		sendChatID = resultsChannelID
+	}
+
+	var replyParams *gotgbot.ReplyParameters
+	if !useResultsChannel {
+		replyParams = &gotgbot.ReplyParameters{
 			MessageId: inputMessage.GetMessageId(),
-		},
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
-		ParseMode:   gotgbot.ParseModeHTML,
-	})
-	if err != nil {
-		_app.Log.Warn("autofilter: send result failed", zap.Error(err))
+		}
+	}
+
+	posterUrl := autofilter.GetPosterUrlWithType(query, isSeries)
+	if posterUrl != "" {
+		msg, sendErr = bot.SendPhoto(sendChatID, gotgbot.InputFileByURL(posterUrl), &gotgbot.SendPhotoOpts{
+			Caption: text,
+			ReplyParameters: replyParams,
+			HasSpoiler:  true,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
+			ParseMode:   gotgbot.ParseModeHTML,
+		})
+	} else {
+		msg, sendErr = bot.SendMessage(sendChatID, text, &gotgbot.SendMessageOpts{
+			ReplyParameters: replyParams,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
+			ParseMode:   gotgbot.ParseModeHTML,
+		})
+	}
+
+	if sendErr != nil {
+		_app.Log.Warn("autofilter: send result failed", zap.Error(sendErr))
+		if useResultsChannel {
+			// Fallback: send directly to original chat
+			_app.Log.Info("autofilter: results channel send failed, falling back to direct chat delivery")
+			replyParamsFallback := &gotgbot.ReplyParameters{
+				MessageId: inputMessage.GetMessageId(),
+			}
+			if posterUrl != "" {
+				msg, err = bot.SendPhoto(inputMessage.GetChat().Id, gotgbot.InputFileByURL(posterUrl), &gotgbot.SendPhotoOpts{
+					Caption: text,
+					ReplyParameters: replyParamsFallback,
+					HasSpoiler:  true,
+					ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
+					ParseMode:   gotgbot.ParseModeHTML,
+				})
+			} else {
+				msg, err = bot.SendMessage(inputMessage.GetChat().Id, text, &gotgbot.SendMessageOpts{
+					ReplyParameters: replyParamsFallback,
+					ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
+					ParseMode:   gotgbot.ParseModeHTML,
+				})
+			}
+			if err != nil {
+				_app.Log.Warn("autofilter: fallback send failed", zap.Error(err))
+				return nil, err
+			}
+			// Set useResultsChannel to false so we don't try to send redirect message
+			useResultsChannel = false
+		} else {
+			return nil, sendErr
+		}
 	} else {
 		middleware.ReactWithRandomEmoji(bot, msg.Chat.Id, msg.MessageId, _app.Config, _app.Log)
 	}
@@ -341,11 +492,53 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 		UniqueId: uniqueId,
 		Query:    query,
 		FromUser: fromUser.Id,
-		ChatID:   ctx.EffectiveChat.Id,
+		ChatID:   msg.Chat.Id,
 		Files:    files,
+		IsPhoto:  posterUrl != "",
 	})
 	if err != nil {
-		_app.Log.Warn("autfilter: save cache failed", zap.Error(err), zap.String("query", query))
+		_app.Log.Warn("autofilter: save cache failed", zap.Error(err), zap.String("query", query))
+	}
+
+	if useResultsChannel {
+		// Send redirect message to original group chat and return it so it gets auto-deleted
+		channelIDStr := fmt.Sprint(resultsChannelID)
+		channelIDStr = strings.TrimPrefix(channelIDStr, "-100")
+		link := fmt.Sprintf("https://t.me/c/%s/%d", channelIDStr, msg.MessageId)
+		if msg.Chat.Username != "" {
+			link = fmt.Sprintf("https://t.me/%s/%d", msg.Chat.Username, msg.MessageId)
+		}
+
+		redirectText := format.KeyValueFormat(`<b>🍿 Hᴇʏ {mention}, I'ᴠᴇ Fᴏᴜɴᴅ Sᴏᴍᴇ ᴍᴀᴛᴄʜᴇs ғᴏʀ ʏᴏᴜ!</b>
+<blockquote><b>🔍 Sᴇᴀʀᴄʜ Query:</b> <code>{query}</code>
+<b>📂 TᴏᴛᴀTx Fɪʟᴇs Fᴏᴜɴᴅ:</b> <code>{total}</code></blockquote>
+
+<i>👇 Cʟɪᴄᴋ ᴛʜᴇ ʙᴜᴛᴛᴏɴ ʙᴇʟᴏᴡ ᴛᴏ ᴠɪᴇᴡ ʏᴏᴜʀ ʀᴇsᴜʟᴛs ɪɴ ᴛʜᴇ ᴄʜᴀɴɴᴇʟ:</i>`, _app.BasicMessageValues(ctx, map[string]any{
+			"query":         query,
+			"warn":          warn,
+			"total":         len(allFiles),
+			"results_count": len(allFiles),
+		}))
+
+		// Fix "TᴏᴛᴀTx" to "Tᴏᴛᴀʟ"
+		redirectText = strings.Replace(redirectText, "TᴏᴛᴀTx", "Tᴏᴛᴀʟ", 1)
+
+		redirectButtons := [][]gotgbot.InlineKeyboardButton{
+			{{Text: "📂 View Results 🍿", Url: link}},
+		}
+
+		redirectMsg, err := bot.SendMessage(inputMessage.GetChat().Id, redirectText, &gotgbot.SendMessageOpts{
+			ReplyParameters: &gotgbot.ReplyParameters{
+				MessageId: inputMessage.GetMessageId(),
+			},
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: redirectButtons},
+			ParseMode:   gotgbot.ParseModeHTML,
+		})
+		if err != nil {
+			_app.Log.Warn("autofilter: send redirect message failed", zap.Error(err))
+			return msg, nil
+		}
+		return redirectMsg, nil
 	}
 
 	return msg, nil
@@ -381,6 +574,7 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
+	files = processSearchResults(files)
 	allFiles := slices.Concat(files...)
 
 	if len(allFiles) == 0 {
@@ -399,32 +593,187 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 		allFiles = allFiles[:50]
 	}
 
-	results := make([]gotgbot.InlineQueryResult, 0, len(allFiles))
+	// Group files by their base title to show distinct titles with unique posters
+	type titleGroup struct {
+		Title    string
+		IsSeries bool
+		Count    int
+	}
+	seen := make(map[string]*titleGroup)
+	var orderedTitles []string
+
 	for _, f := range allFiles {
-		// Encode start parameter for the file
-		data := autofilter.URLData{
-			FileUniqueId: f.UniqueId,
-			ChatId:       0, // Not applicable for inline
-			HasShortener: false,
+		baseTitle := autofilter.ExtractBaseTitle(f.FileName)
+		if baseTitle == "" {
+			baseTitle = strings.Title(query)
 		}
-		encoded := data.Encode()
 
-		description := fmt.Sprintf("Size: %s", functions.FileSizeToString(f.FileSize))
+		key := strings.ToLower(baseTitle)
+		if g, ok := seen[key]; ok {
+			g.Count++
+			if !g.IsSeries && autofilter.IsSeriesFile(f.FileName) {
+				g.IsSeries = true
+			}
+		} else {
+			seen[key] = &titleGroup{
+				Title:    baseTitle,
+				IsSeries: autofilter.IsSeriesFile(f.FileName),
+				Count:    1,
+			}
+			orderedTitles = append(orderedTitles, key)
+		}
+	}
 
-		results = append(results, gotgbot.InlineQueryResultArticle{
-			Id:    f.UniqueId,
-			Title: f.FileName,
-			InputMessageContent: gotgbot.InputTextMessageContent{
-				MessageText: fmt.Sprintf("<b>File Found: %s</b>\n\nClick below to get the file.", f.FileName),
-				ParseMode:   gotgbot.ParseModeHTML,
-			},
-			ReplyMarkup: &gotgbot.InlineKeyboardMarkup{
-				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-					{{Text: "🎁 Get File", Url: fmt.Sprintf("https://t.me/%s?start=%s", bot.Username, encoded), Style: "success"}},
-				},
-			},
-			Description: description,
+	// Limit to 10 distinct titles max (each needs a TMDB lookup)
+	if len(orderedTitles) > 10 {
+		orderedTitles = orderedTitles[:10]
+	}
+
+	results := make([]gotgbot.InlineQueryResult, 0, len(orderedTitles))
+	for i, key := range orderedTitles {
+		g := seen[key]
+
+		var groupFiles autofilter.Files
+		for _, f := range allFiles {
+			baseTitle := autofilter.ExtractBaseTitle(f.FileName)
+			if baseTitle == "" {
+				baseTitle = strings.Title(query)
+			}
+			if strings.ToLower(baseTitle) == key {
+				groupFiles = append(groupFiles, f)
+			}
+		}
+
+		pagedGroupFiles := processSearchResults([]autofilter.Files{groupFiles})
+		if len(pagedGroupFiles) == 0 {
+			continue
+		}
+
+		var groupAllFiles autofilter.Files
+		for _, p := range pagedGroupFiles {
+			groupAllFiles = append(groupAllFiles, p...)
+		}
+
+		mediaType := "Movie"
+		if g.IsSeries {
+			mediaType = "Series"
+		}
+		description := fmt.Sprintf("📂 %s • %d files available", mediaType, len(groupAllFiles))
+
+		var buttons [][]gotgbot.InlineKeyboardButton
+		uniqueId := functions.RandString(15)
+		posterUrl := autofilter.GetPosterUrlWithType(g.Title, g.IsSeries)
+
+		err = _app.Cache.Autofilter.Save(&autofilter.SearchResult{
+			UniqueId: uniqueId,
+			Query:    g.Title,
+			FromUser: iq.From.Id,
+			ChatID:   0,
+			Files:    pagedGroupFiles,
+			IsPhoto:  posterUrl != "",
 		})
+		if err != nil {
+			_app.Log.Warn("inline search: save cache failed", zap.Error(err))
+		}
+
+		if g.IsSeries {
+			// Season row
+			seasonButtons := groupAllFiles.ProcessSeasons(uniqueId)
+			if len(seasonButtons) > 0 && len(seasonButtons[0]) > 0 {
+				seasonButtons[0][0].Style = "success"
+			}
+			buttons = append(buttons, seasonButtons...)
+
+			// Language row
+			languages := autofilter.DetectLanguages(groupAllFiles)
+			if len(languages) > 0 {
+				var langRow []gotgbot.InlineKeyboardButton
+				for _, l := range languages {
+					langRow = append(langRow, gotgbot.InlineKeyboardButton{
+						Text:         l,
+						CallbackData: fmt.Sprintf("lang|%s_%s", uniqueId, l),
+						Style:        "primary",
+					})
+					if len(langRow) == 2 {
+						buttons = append(buttons, langRow)
+						langRow = nil
+					}
+				}
+				if len(langRow) > 0 {
+					buttons = append(buttons, langRow)
+				}
+			}
+		}
+
+		// Divider
+		latestReleasesBtn := gotgbot.InlineKeyboardButton{Text: "🌟 Latest Releases 🌟", CallbackData: "ignore", Style: "success"}
+		if _app.Config.LatestReleasesUrl != "" {
+			latestReleasesBtn.Url = _app.Config.LatestReleasesUrl
+			latestReleasesBtn.CallbackData = ""
+		}
+		buttons = append(buttons, []gotgbot.InlineKeyboardButton{latestReleasesBtn})
+
+		// File buttons for first page
+		fileButtons := pagedGroupFiles[0].Process(0, bot.Username, _app.Config)
+		buttons = append(buttons, fileButtons...)
+
+		// Footer Action Row 1
+		newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "ignore"}
+		if _app.Config.NewMoviesUrl != "" {
+			newMoviesBtn.Url = _app.Config.NewMoviesUrl
+			newMoviesBtn.CallbackData = ""
+		}
+		updatesBtn := gotgbot.InlineKeyboardButton{Text: "📺 Updates", Style: "success", CallbackData: "ignore"}
+		if _app.Config.UpdatesUrl != "" {
+			updatesBtn.Url = _app.Config.UpdatesUrl
+			updatesBtn.CallbackData = ""
+		}
+		buttons = append(buttons, []gotgbot.InlineKeyboardButton{newMoviesBtn, updatesBtn})
+
+		// Navigation
+		if len(pagedGroupFiles) > 1 {
+			buttons = append(buttons, footerRow(uniqueId, 0, len(pagedGroupFiles)))
+		}
+
+		// Footer Action Row 2
+		buttons = append(buttons, []gotgbot.InlineKeyboardButton{
+			{Text: "📢 Share", SwitchInlineQuery: &g.Title, Style: "success"},
+			{Text: "❌ Close", CallbackData: "close", Style: "danger"},
+			{Text: "♻️ Reset", CallbackData: "reset|" + g.Title, Style: "primary"},
+		})
+
+		replyMarkup := &gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: buttons,
+		}
+
+		caption := fmt.Sprintf("<b>🎬 %s</b>\n📂 <i>%s • %d files available</i>\n\n⚡️ 𝖲𝖾𝗅𝖾𝖼𝗍 𝗍𝗁𝖾 𝖿𝗂𝗅𝖾 𝗒𝗈υ 𝗐𝖺𝗇𝗍 𝖻𝖾𝗅𝗈𝗐:", g.Title, mediaType, len(groupAllFiles))
+
+		resultId := fmt.Sprintf("title_%d_%s", i, key)
+
+		if posterUrl != "" {
+			results = append(results, gotgbot.InlineQueryResultPhoto{
+				Id:           resultId,
+				PhotoUrl:     posterUrl,
+				ThumbnailUrl: posterUrl,
+				Title:        g.Title,
+				Description:  description,
+				Caption:      caption,
+				ParseMode:    gotgbot.ParseModeHTML,
+				ReplyMarkup:  replyMarkup,
+			})
+		} else {
+			msgContent := gotgbot.InputTextMessageContent{
+				MessageText: caption,
+				ParseMode:   gotgbot.ParseModeHTML,
+			}
+			results = append(results, gotgbot.InlineQueryResultArticle{
+				Id:                  resultId,
+				Title:               g.Title,
+				Description:         description,
+				InputMessageContent: msgContent,
+				ReplyMarkup:         replyMarkup,
+			})
+		}
 	}
 
 	_, err = iq.Answer(bot, results, &gotgbot.AnswerInlineQueryOpts{
@@ -438,8 +787,15 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 	return err
 }
 
-// SendFileCallback handles the direct file selection callback from private chats.
 func SendFileCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
+	ok, err := fsub.CheckFsub(_app, bot, ctx)
+	if err != nil {
+		_app.Log.Warn("SendFileCallback: check fsub failed", zap.Error(err))
+	}
+	if !ok {
+		return nil
+	}
+
 	c := ctx.CallbackQuery
 	_, fileUniqueId, found := strings.Cut(c.Data, "|")
 	if !found {
@@ -451,7 +807,14 @@ func SendFileCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Sending File... 📤"})
+	var targetChatId int64
+	if c.Message != nil {
+		targetChatId = c.Message.GetChat().Id
+		c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Sending File... 📤"})
+	} else {
+		targetChatId = c.From.Id
+		c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Sending File to your PM... 📥"})
+	}
 
 	var (
 		warn    string
@@ -461,15 +824,23 @@ func SendFileCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
 		warn = fmt.Sprintf("<blockquote><b>⚠️ This File Will Be Automatically Deleted in %d Minutes.\n\nPlease Forward it to Another Chat or Saved Messages to save it forever! 📥</b></blockquote>", delTime)
 	}
 
-	msg, err := f.Send(bot, c.Message.GetChat().Id, &model.SendFileOpts{
+	msg, err := f.Send(bot, targetChatId, &model.SendFileOpts{
 		Caption: _app.FormatText(ctx, _app.Config.GetFileCaption(), map[string]any{
 			"file_size": functions.FileSizeToString(f.FileSize),
-			"file_name": f.FileName,
+			"file_name": autofilter.CleanFileNameForDisplay(f.FileName),
 			"warn":      warn,
 		}),
 		Keyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "🗑️ ᴅᴇʟᴇᴛᴇ ғɪʟᴇ 🗑️", CallbackData: "close"}}},
 	})
 	if err != nil {
+		if functions.IsChatNotFoundErr(err) {
+			c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{
+				Text:      "⚠️ Please START the bot first in PM to receive files!",
+				ShowAlert: true,
+				Url:       fmt.Sprintf("https://t.me/%s?start=start", bot.Username),
+			})
+			return nil
+		}
 		_app.Log.Warn("callback: send file failed", zap.Error(err), zap.String("file_id", f.FileId))
 		return nil
 	}
@@ -543,13 +914,18 @@ func SeasonListCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	buttons := res.Files[0].ProcessSeasons(uniqueId)
+	var allFiles autofilter.Files
+	for _, page := range res.Files {
+		allFiles = append(allFiles, page...)
+	}
+	buttons := allFiles.ProcessSeasons(uniqueId)
 	text := "<b>Select Season:</b>"
-	_, _, err = c.Message.EditText(bot, text, &gotgbot.EditMessageTextOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
-		ParseMode:   gotgbot.ParseModeHTML,
-	})
-	if err == nil {
+	var mainPosterUrl string
+	if res.IsPhoto {
+		mainPosterUrl = autofilter.GetPosterUrlWithType(res.Query, true)
+	}
+	err = editMessageOrCaption(bot, c.Message, c.InlineMessageId, text, gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons}, res.IsPhoto, mainPosterUrl)
+	if err == nil && c.Message != nil {
 		middleware.ReactWithRandomEmoji(bot, c.Message.GetChat().Id, c.Message.GetMessageId(), _app.Config, _app.Log)
 	}
 	return err
@@ -629,28 +1005,63 @@ func SeasonCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
 	currentPageEpisodes := seasonFiles[start:end]
 
 	var buttons [][]gotgbot.InlineKeyboardButton
-	if ctx.EffectiveChat.Type == "private" {
-		// Use seasonUniqueId so ALL/SELECT work only for this season
-		buttons = append(buttons, headerRow(seasonUniqueId, 0, true))
-	}
-	fileButtons := currentPageEpisodes.Process(ctx.EffectiveChat.Id, bot.Username, _app.Config)
 
-	// Add Custom Button in the middle (after 5 rows or at the end)
-	if _app.Config.ResultButtonText != "" && _app.Config.ResultButtonUrl != "" {
-		splitPoint := 5
-		if len(fileButtons) < splitPoint {
-			splitPoint = len(fileButtons)
+	// Season row
+	seasonButtons := allFiles.ProcessSeasons(uniqueId)
+	for rIdx, row := range seasonButtons {
+		for cIdx, btn := range row {
+			expectedData := fmt.Sprintf("sn|%s_%d", uniqueId, season)
+			if btn.CallbackData == expectedData {
+				seasonButtons[rIdx][cIdx].Style = "success"
+			} else {
+				seasonButtons[rIdx][cIdx].Style = "primary"
+			}
 		}
+	}
+	buttons = append(buttons, seasonButtons...)
 
-		customBtn := []gotgbot.InlineKeyboardButton{{
-			Text: _app.Config.ResultButtonText,
-			Url:  _app.Config.ResultButtonUrl,
-		}}
-
-		fileButtons = slices.Insert(fileButtons, splitPoint, customBtn)
+	// Language row
+	languages := autofilter.DetectLanguages(allFiles)
+	if len(languages) > 0 {
+		var langRow []gotgbot.InlineKeyboardButton
+		for _, l := range languages {
+			langRow = append(langRow, gotgbot.InlineKeyboardButton{
+				Text:         l,
+				CallbackData: fmt.Sprintf("lang|%s_%s", uniqueId, l),
+				Style:        "primary",
+			})
+			if len(langRow) == 2 {
+				buttons = append(buttons, langRow)
+				langRow = nil
+			}
+		}
+		if len(langRow) > 0 {
+			buttons = append(buttons, langRow)
+		}
 	}
 
+	// Divider
+	latestReleasesBtn := gotgbot.InlineKeyboardButton{Text: "🌟 Latest Releases 🌟", CallbackData: "ignore", Style: "success"}
+	if _app.Config.LatestReleasesUrl != "" {
+		latestReleasesBtn.Url = _app.Config.LatestReleasesUrl
+		latestReleasesBtn.CallbackData = ""
+	}
+	buttons = append(buttons, []gotgbot.InlineKeyboardButton{latestReleasesBtn})
+
+	var chatId int64
+	var chatType string
+	if ctx.EffectiveChat != nil {
+		chatId = ctx.EffectiveChat.Id
+		chatType = ctx.EffectiveChat.Type
+	}
+
+	fileButtons := currentPageEpisodes.Process(chatId, bot.Username, _app.Config)
 	buttons = append(buttons, fileButtons...)
+
+	// Multi-select for this season
+	if chatType == "private" {
+		buttons = append(buttons, []gotgbot.InlineKeyboardButton{{Text: "✅ Select Multiple Files", CallbackData: fmt.Sprintf("sel|%s_%d", seasonUniqueId, pageIndex), Style: "primary"}})
+	}
 
 	// Navigation (Diamonds Style)
 	navBtns := make([]gotgbot.InlineKeyboardButton, 0, 3)
@@ -691,10 +1102,11 @@ func SeasonCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
 		{Text: "🔙 Back", CallbackData: fmt.Sprintf("af|%s", uniqueId), Style: "primary"},
 	})
 
-	_, _, err = c.Message.EditText(bot, "<b>Select Episode:</b>", &gotgbot.EditMessageTextOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
-		ParseMode:   gotgbot.ParseModeHTML,
-	})
+	var seasonPosterUrl string
+	if res.IsPhoto {
+		seasonPosterUrl = autofilter.GetSeasonPosterUrl(res.Query, season)
+	}
+	err = editMessageOrCaption(bot, c.Message, c.InlineMessageId, "<b>Select Episode:</b>", gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons}, res.IsPhoto, seasonPosterUrl)
 	return err
 }
 
@@ -737,8 +1149,13 @@ func LanguageCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
 		langFiles = langFiles[:10]
 	}
 
+	var chatId int64
+	if ctx.EffectiveChat != nil {
+		chatId = ctx.EffectiveChat.Id
+	}
+
 	var buttons [][]gotgbot.InlineKeyboardButton
-	fileButtons := langFiles.Process(ctx.EffectiveChat.Id, bot.Username, _app.Config)
+	fileButtons := langFiles.Process(chatId, bot.Username, _app.Config)
 	buttons = append(buttons, fileButtons...)
 
 	// Footer Action Row
@@ -749,10 +1166,161 @@ func LanguageCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
 	})
 
 	text := fmt.Sprintf("<b>Results for Language:</b> <code>%s</code>\n\n<i>Found %d files.</i>", language, len(langFiles))
+	err = editMessageOrCaption(bot, c.Message, c.InlineMessageId, text, gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons}, res.IsPhoto, "")
+	return err
+}
 
-	_, _, err = c.Message.EditText(bot, text, &gotgbot.EditMessageTextOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
+func editMessageOrCaption(bot *gotgbot.Bot, msg gotgbot.MaybeInaccessibleMessage, inlineMessageId string, text string, markup gotgbot.InlineKeyboardMarkup, isMedia bool, newPosterUrl string) error {
+	if inlineMessageId != "" {
+		if isMedia {
+			if newPosterUrl != "" {
+				_, _, err := bot.EditMessageMedia(
+					gotgbot.InputMediaPhoto{
+						Media:     gotgbot.InputFileByURL(newPosterUrl),
+						Caption:   text,
+						ParseMode: gotgbot.ParseModeHTML,
+					},
+					&gotgbot.EditMessageMediaOpts{
+						InlineMessageId: inlineMessageId,
+						ReplyMarkup:     markup,
+					},
+				)
+				return err
+			}
+			_, _, err := bot.EditMessageCaption(&gotgbot.EditMessageCaptionOpts{
+				InlineMessageId: inlineMessageId,
+				Caption:         text,
+				ReplyMarkup:     markup,
+				ParseMode:       gotgbot.ParseModeHTML,
+			})
+			return err
+		}
+		_, _, err := bot.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+			InlineMessageId: inlineMessageId,
+			ReplyMarkup:     markup,
+			ParseMode:       gotgbot.ParseModeHTML,
+		})
+		return err
+	}
+
+	chatId := msg.GetChat().Id
+	msgId := msg.GetMessageId()
+
+	if !isMedia {
+		if m, ok := msg.(*gotgbot.Message); ok {
+			if len(m.Photo) > 0 || m.Video != nil || m.Document != nil || m.Audio != nil || m.Voice != nil || m.Animation != nil || m.VideoNote != nil || m.Sticker != nil {
+				isMedia = true
+			}
+		}
+	}
+
+	if isMedia {
+		if newPosterUrl != "" {
+			_, _, err := bot.EditMessageMedia(
+				gotgbot.InputMediaPhoto{
+					Media:     gotgbot.InputFileByURL(newPosterUrl),
+					Caption:   text,
+					ParseMode: gotgbot.ParseModeHTML,
+				},
+				&gotgbot.EditMessageMediaOpts{
+					ChatId:      chatId,
+					MessageId:   msgId,
+					ReplyMarkup: markup,
+				},
+			)
+			return err
+		}
+		_, _, err := bot.EditMessageCaption(&gotgbot.EditMessageCaptionOpts{
+			ChatId:      chatId,
+			MessageId:   msgId,
+			Caption:     text,
+			ReplyMarkup: markup,
+			ParseMode:   gotgbot.ParseModeHTML,
+		})
+		return err
+	}
+
+	_, _, err := bot.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+		ChatId:      chatId,
+		MessageId:   msgId,
+		ReplyMarkup: markup,
 		ParseMode:   gotgbot.ParseModeHTML,
 	})
 	return err
 }
+
+func processSearchResults(files []autofilter.Files) []autofilter.Files {
+	if len(files) == 0 {
+		return nil
+	}
+
+	// 1. Flatten all files
+	var allFiles autofilter.Files
+	for _, page := range files {
+		allFiles = append(allFiles, page...)
+	}
+
+	// 2. Deduplicate
+	seenFileId := make(map[string]bool)
+	seenNameSize := make(map[string]bool)
+	var deduplicated autofilter.Files
+
+	for _, f := range allFiles {
+		fid := f.FileId
+		nameSizeKey := fmt.Sprintf("%s_%d", f.FileName, f.FileSize)
+
+		if fid != "" && seenFileId[fid] {
+			continue
+		}
+		if seenNameSize[nameSizeKey] {
+			continue
+		}
+
+		if fid != "" {
+			seenFileId[fid] = true
+		}
+		seenNameSize[nameSizeKey] = true
+		deduplicated = append(deduplicated, f)
+	}
+
+	// 3. Sort & Filter
+	if len(deduplicated) > 0 {
+		searchType := autofilter.DetectType(deduplicated)
+		isSeries := searchType == "series"
+		if isSeries {
+			// Filter out any files that do not have series metadata (season > 0 or episode > 0)
+			var seriesOnly autofilter.Files
+			for _, f := range deduplicated {
+				s, e := autofilter.ExtractSeriesMetadata(f.FileName)
+				if s > 0 || e > 0 {
+					seriesOnly = append(seriesOnly, f)
+				}
+			}
+			// Only apply filter if we still have at least one series file left
+			if len(seriesOnly) > 0 {
+				deduplicated = seriesOnly
+			}
+			deduplicated.SortSeries()
+		} else {
+			deduplicated.SortMovies()
+		}
+	}
+
+	// 4. Re-paginate
+	pageSize := _app.Config.GetMaxPerPage()
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+
+	var pagedFiles []autofilter.Files
+	for i := 0; i < len(deduplicated); i += pageSize {
+		end := i + pageSize
+		if end > len(deduplicated) {
+			end = len(deduplicated)
+		}
+		pagedFiles = append(pagedFiles, deduplicated[i:end])
+	}
+
+	return pagedFiles
+}
+

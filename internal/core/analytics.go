@@ -40,7 +40,7 @@ func (s *AnalyticsService) GetStats() (*model.AnalyticsResult, error) {
 	}
 
 	// Fetch from DB
-	total, newToday, active24h, countries, err := _app.DB.GetUserAnalytics()
+	total, newToday, active24h, activeWeekly, activeMonthly, countries, err := _app.DB.GetUserAnalytics()
 	if err != nil {
 		return nil, err
 	}
@@ -57,13 +57,15 @@ func (s *AnalyticsService) GetStats() (*model.AnalyticsResult, error) {
 	}
 
 	s.cache = &model.AnalyticsResult{
-		TotalUsers:    total,
-		NewUsersToday: newToday,
-		ActiveUsers:   active24h,
-		TopSearches:   topSearches,
-		Countries:     countries,
-		Languages:     languages,
-		CachedAt:      time.Now(),
+		TotalUsers:         total,
+		NewUsersToday:      newToday,
+		ActiveUsers:        active24h,
+		ActiveUsersWeekly:  activeWeekly,
+		ActiveUsersMonthly: activeMonthly,
+		TopSearches:        topSearches,
+		Countries:          countries,
+		Languages:          languages,
+		CachedAt:           time.Now(),
 	}
 	s.cacheExpiry = time.Now().Add(60 * time.Second)
 

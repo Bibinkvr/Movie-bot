@@ -22,6 +22,8 @@ type Client struct {
 	userCollection *mongo.Collection
 	// joinRequestCollection stores join requests sent by users.
 	joinRequestsCollection *mongo.Collection
+	// joinRequestsLogsCollection stores timestamps of join requests.
+	joinRequestsLogsCollection *mongo.Collection
 	// fileCollection stores all saved files.
 	fileCollection *MultiCollection
 	// configCollection stores settings configuration of the bot.
@@ -30,6 +32,8 @@ type Client struct {
 	groupCollection *mongo.Collection
 	// Collection of long operations like index.
 	opsCollection *mongo.Collection
+	// broadcastCollection stores broadcast history.
+	broadcastCollection *mongo.Collection
 
 	botId  int64
 	ctx    context.Context
@@ -98,7 +102,17 @@ func NewClient(ctx context.Context, mongodbUri string, botId int64, log *zap.Log
 
 	fileCollection := NewMultiCollection(fileCollections, clientOpts.MultiCollectionIndex, log)
 
-	primaryFileCollection.Indexes().CreateOne(context.TODO(), mongo.IndexModel{Keys: bson.D{{Key: "file_name", Value: "text"}, {Key: "time", Value: 1}}})
+	for _, coll := range fileCollections {
+		coll.Indexes().CreateOne(context.TODO(), mongo.IndexModel{
+			Keys: bson.D{{Key: "file_name", Value: "text"}, {Key: "time", Value: 1}},
+		})
+		coll.Indexes().CreateOne(context.TODO(), mongo.IndexModel{
+			Keys: bson.D{{Key: "file_id", Value: 1}},
+		})
+		coll.Indexes().CreateOne(context.TODO(), mongo.IndexModel{
+			Keys: bson.D{{Key: "file_name", Value: 1}, {Key: "file_size", Value: 1}},
+		})
+	}
 
 	client := &Client{
 		botId:                  botId,
@@ -109,8 +123,10 @@ func NewClient(ctx context.Context, mongodbUri string, botId int64, log *zap.Log
 		fileCollection:         fileCollection,
 		configCollection:       dataBase.Collection(database.CollectionNameConfigs),
 		groupCollection:        dataBase.Collection(database.CollectionNameGroups),
-		opsCollection:          dataBase.Collection(database.CollectionNameOperations),
-		joinRequestsCollection: dataBase.Collection(database.CollectionNameJoinRequests),
+		opsCollection:              dataBase.Collection(database.CollectionNameOperations),
+		joinRequestsCollection:     dataBase.Collection(database.CollectionNameJoinRequests),
+		joinRequestsLogsCollection: dataBase.Collection(database.CollectionNameJoinRequestsLogs),
+		broadcastCollection:        dataBase.Collection(database.CollectionNameBroadcasts),
 	}
 
 	return client, nil
@@ -138,12 +154,12 @@ func (f fileCounts) String() string {
 }
 
 func (c *Client) Stats() (*model.Stats, error) {
-	users, err := c.userCollection.EstimatedDocumentCount(c.ctx)
+	users, err := c.userCollection.CountDocuments(c.ctx, bson.M{})
 	if err != nil {
 		return nil, err
 	}
 
-	groups, err := c.groupCollection.EstimatedDocumentCount(c.ctx)
+	groups, err := c.groupCollection.CountDocuments(c.ctx, bson.M{})
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +181,7 @@ func (c *Client) Stats() (*model.Stats, error) {
 
 	// 2. Top Sources from User Aggregation
 	sourcePipeline := mongo.Pipeline{
-		{{Key: "$group", Value: bson.D{{Key: "_id", Value: "$source"}, {Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}}}}},
+		{{Key: "$group", Value: bson.D{{Key: "_id", Value: bson.D{{Key: "$ifNull", Value: []interface{}{"$source", "Direct/Unknown"}}}}, {Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}}}}},
 		{{Key: "$sort", Value: bson.D{{Key: "count", Value: -1}}}},
 		{{Key: "$limit", Value: 10}},
 	}

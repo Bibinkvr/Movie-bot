@@ -61,6 +61,7 @@ func (p *Panel) NewPage(name, displayName string) *Page {
 // HandleUpdate processes the update and then edits the message's content with result.
 func (p *Panel) HandleUpdate(ctx *ext.Context, bot *gotgbot.Bot) error {
 	update := ctx.CallbackQuery
+	_, _ = update.Answer(bot, nil)
 
 	content, markup, err := ProcessUpdate(p, ctx, bot)
 	if err != nil {

@@ -36,6 +36,12 @@ type Config struct {
 	// Custom Privacy Message
 	PrivacyText    string                          `json:"privacy_text,omitempty" bson:"privacy_text,omitempty"`
 	PrivacyButtons [][]button.InlineKeyboardButton `json:"privacy_buttons,omitempty" bson:"privacy_buttons,omitempty"`
+	// Custom Movies Message
+	MoviesText     string                          `json:"movies_text,omitempty" bson:"movies_text,omitempty"`
+	MoviesButtons  [][]button.InlineKeyboardButton `json:"movies_buttons,omitempty" bson:"movies_buttons,omitempty"`
+	// Custom Series Message
+	SeriesText     string                          `json:"series_text,omitempty" bson:"series_text,omitempty"`
+	SeriesButtons  [][]button.InlineKeyboardButton `json:"series_buttons,omitempty" bson:"series_buttons,omitempty"`
 
 	// Force Subscribe Channels.
 	FsubChannels []model.Channel `json:"fsub,omitempty" bson:"fsub,omitempty"`
@@ -83,8 +89,16 @@ type Config struct {
 	ResultButtonUrl  string `json:"result_btn_url,omitempty" bson:"result_btn_url,omitempty"`
 
 	// Custom URLs for footer buttons
-	NewMoviesUrl string `json:"new_movies_url,omitempty" bson:"new_movies_url,omitempty"`
-	UpdatesUrl   string `json:"updates_url,omitempty" bson:"updates_url,omitempty"`
+	NewMoviesUrl      string `json:"new_movies_url,omitempty" bson:"new_movies_url,omitempty"`
+	UpdatesUrl        string `json:"updates_url,omitempty" bson:"updates_url,omitempty"`
+	LatestReleasesUrl string `json:"latest_releases_url,omitempty" bson:"latest_releases_url,omitempty"`
+
+	// Results Channel
+	ResultsChannel   string `json:"results_channel,omitempty" bson:"results_channel,omitempty"`
+	ResultsChannelID int64  `json:"results_channel_id,omitempty" bson:"results_channel_id,omitempty"`
+
+	// Monitored/Index Channels
+	FileChannels []int64 `json:"file_channels,omitempty" bson:"file_channels,omitempty"`
 
 	// cached value from ToMap, updated using UpdateMap
 	cachedMap map[string]any
@@ -174,4 +188,12 @@ func (c *Config) GetReactions() []string {
 		return s
 	}
 	return c.Reactions
+}
+
+func (c *Config) GetResultsChannel() string {
+	return c.ResultsChannel
+}
+
+func (c *Config) GetResultsChannelID() int64 {
+	return c.ResultsChannelID
 }

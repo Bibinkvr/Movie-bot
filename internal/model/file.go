@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 
 	"autofilterbot/internal/limiter"
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -35,8 +36,9 @@ type File struct {
 }
 
 type SendFileOpts struct {
-	Caption  string
-	Keyboard [][]gotgbot.InlineKeyboardButton
+	Caption         string
+	Keyboard        [][]gotgbot.InlineKeyboardButton
+	MessageEffectId string
 }
 
 // Send sends the file to chatId with given caption, markup and html parse mode.
@@ -54,9 +56,18 @@ func (f *File) Send(bot *gotgbot.Bot, chatId int64, opts *SendFileOpts) (*gotgbo
 			if len(opts.Keyboard) != 0 {
 				sendOpts.ReplyMarkup = gotgbot.InlineKeyboardMarkup{InlineKeyboard: opts.Keyboard}
 			}
+
+			if opts.MessageEffectId != "" {
+				sendOpts.MessageEffectId = opts.MessageEffectId
+			}
 		}
 
-		return bot.SendDocument(chatId, gotgbot.InputFileByID(f.FileId), sendOpts)
+		res, err := bot.SendDocument(chatId, gotgbot.InputFileByID(f.FileId), sendOpts)
+		if err != nil && strings.Contains(err.Error(), "EFFECT_ID_INVALID") {
+			sendOpts.MessageEffectId = ""
+			return bot.SendDocument(chatId, gotgbot.InputFileByID(f.FileId), sendOpts)
+		}
+		return res, err
 	case FileTypeVideo:
 		sendOpts := &gotgbot.SendVideoOpts{ParseMode: gotgbot.ParseModeHTML}
 
@@ -68,9 +79,18 @@ func (f *File) Send(bot *gotgbot.Bot, chatId int64, opts *SendFileOpts) (*gotgbo
 			if len(opts.Keyboard) != 0 {
 				sendOpts.ReplyMarkup = gotgbot.InlineKeyboardMarkup{InlineKeyboard: opts.Keyboard}
 			}
+
+			if opts.MessageEffectId != "" {
+				sendOpts.MessageEffectId = opts.MessageEffectId
+			}
 		}
 
-		return bot.SendVideo(chatId, gotgbot.InputFileByID(f.FileId), sendOpts)
+		res, err := bot.SendVideo(chatId, gotgbot.InputFileByID(f.FileId), sendOpts)
+		if err != nil && strings.Contains(err.Error(), "EFFECT_ID_INVALID") {
+			sendOpts.MessageEffectId = ""
+			return bot.SendVideo(chatId, gotgbot.InputFileByID(f.FileId), sendOpts)
+		}
+		return res, err
 	case FileTypeAudio:
 		sendOpts := &gotgbot.SendAudioOpts{ParseMode: gotgbot.ParseModeHTML}
 
@@ -82,9 +102,18 @@ func (f *File) Send(bot *gotgbot.Bot, chatId int64, opts *SendFileOpts) (*gotgbo
 			if len(opts.Keyboard) != 0 {
 				sendOpts.ReplyMarkup = gotgbot.InlineKeyboardMarkup{InlineKeyboard: opts.Keyboard}
 			}
+
+			if opts.MessageEffectId != "" {
+				sendOpts.MessageEffectId = opts.MessageEffectId
+			}
 		}
 
-		return bot.SendAudio(chatId, gotgbot.InputFileByID(f.FileId), sendOpts)
+		res, err := bot.SendAudio(chatId, gotgbot.InputFileByID(f.FileId), sendOpts)
+		if err != nil && strings.Contains(err.Error(), "EFFECT_ID_INVALID") {
+			sendOpts.MessageEffectId = ""
+			return bot.SendAudio(chatId, gotgbot.InputFileByID(f.FileId), sendOpts)
+		}
+		return res, err
 	case FileTypeVoice:
 		sendOpts := &gotgbot.SendVoiceOpts{ParseMode: gotgbot.ParseModeHTML}
 
@@ -96,9 +125,18 @@ func (f *File) Send(bot *gotgbot.Bot, chatId int64, opts *SendFileOpts) (*gotgbo
 			if len(opts.Keyboard) != 0 {
 				sendOpts.ReplyMarkup = gotgbot.InlineKeyboardMarkup{InlineKeyboard: opts.Keyboard}
 			}
+
+			if opts.MessageEffectId != "" {
+				sendOpts.MessageEffectId = opts.MessageEffectId
+			}
 		}
 
-		return bot.SendVoice(chatId, gotgbot.InputFileByID(f.FileId), sendOpts)
+		res, err := bot.SendVoice(chatId, gotgbot.InputFileByID(f.FileId), sendOpts)
+		if err != nil && strings.Contains(err.Error(), "EFFECT_ID_INVALID") {
+			sendOpts.MessageEffectId = ""
+			return bot.SendVoice(chatId, gotgbot.InputFileByID(f.FileId), sendOpts)
+		}
+		return res, err
 	default:
 		return nil, fmt.Errorf("unsupported file type %s", f.FileType)
 	}

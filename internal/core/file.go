@@ -53,17 +53,23 @@ func DeleteFile(bot *gotgbot.Bot, ctx *ext.Context) error {
 	if !ok {
 		return nil
 	}
-	m := ctx.EffectiveMessage
 
 	if !_app.AuthAdmin(ctx) {
 		return nil
 	}
 
+	m := ctx.EffectiveMessage
 	var fileUniqueId string
+	var replyToMsg *gotgbot.Message
 
-	if f := functions.FileFromMessage(m.ReplyToMessage); f != nil {
-		fileUniqueId = f.UniqueId
-	} else {
+	if m != nil && m.ReplyToMessage != nil {
+		if f := functions.FileFromMessage(m.ReplyToMessage); f != nil {
+			fileUniqueId = f.UniqueId
+			replyToMsg = m
+		}
+	}
+
+	if fileUniqueId == "" {
 		conv := conversation.NewConversatorFromUpdate(bot, ctx.Update)
 
 		replyM, err := conv.Ask(_app.Ctx, "Please send me the file you would like to delete:", &gotgbot.SendMessageOpts{
@@ -72,7 +78,6 @@ func DeleteFile(bot *gotgbot.Bot, ctx *ext.Context) error {
 			},
 		})
 		if err != nil {
-			m.Reply(bot, fmt.Sprintf("An Error occurred: %v", err), nil)
 			return nil
 		}
 
@@ -83,16 +88,21 @@ func DeleteFile(bot *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		fileUniqueId = f.UniqueId
+		replyToMsg = replyM
 	}
 
 	err := _app.DB.DeleteFile(fileUniqueId)
 	if err != nil {
-		m.Reply(bot, fmt.Sprintf("Failed to Delete File: %v", err), nil)
+		if replyToMsg != nil {
+			replyToMsg.Reply(bot, fmt.Sprintf("Failed to Delete File: %v", err), nil)
+		}
 		_app.Log.Warn("delete file failed", zap.String("file_id", fileUniqueId), zap.Error(err))
 		return nil
 	}
 
-	m.Reply(bot, "𝖥𝗂𝗅𝖾 𝖶𝖺𝗌 𝖣𝖾𝗅𝖾𝗍𝖾𝖽 𝖲𝗎𝖼𝖼𝖾𝗌𝗌𝖿𝗎𝗅𝗅𝗒 🗑️", nil)
+	if replyToMsg != nil {
+		replyToMsg.Reply(bot, "𝖥𝗂𝗅𝖾 𝖶𝖺𝗌 𝖣𝖾𝗅𝖾𝗍𝖾𝖽 𝖲𝗎𝖼𝖼𝖾𝗌𝗌𝖿𝗎𝗅𝗅𝗒 🗑️", nil)
+	}
 
 	return nil
 }

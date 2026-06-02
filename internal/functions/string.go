@@ -9,8 +9,23 @@ import (
 
 var nonAlphaNumericRegex = regexp.MustCompile(`[^\w\s]+`)
 
+var promoPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(?:\[\s*@\w+\s*\]|\(\s*@\w+\s*\)|@\w+)`),
+	regexp.MustCompile(`(?i)t\.me/\w+`),
+	regexp.MustCompile(`(?i)\bDramaOST\b`),
+}
+
+// CleanPromoFromName removes username promotions and links from filename.
+func CleanPromoFromName(name string) string {
+	for _, pattern := range promoPatterns {
+		name = pattern.ReplaceAllString(name, " ")
+	}
+	return name
+}
+
 // RemoveSymbols returns a copy of the string will all non alpha-numeric characters removed.
 func RemoveSymbols(input string) string {
+	input = strings.ReplaceAll(input, "_", " ")
 	// removes all symbols using regex and then splits into fields and rejoins to remove unnecessary whitespaces
 	return strings.Join(strings.Fields(nonAlphaNumericRegex.ReplaceAllString(input, " ")), " ")
 }

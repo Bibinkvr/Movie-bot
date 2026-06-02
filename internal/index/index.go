@@ -29,9 +29,10 @@ type Operation struct {
 
 	*model.Index
 
-	db  database.Database
-	log *zap.Logger
-	bot *gotgbot.Bot
+	db      database.Database
+	log     *zap.Logger
+	bot     *gotgbot.Bot
+	manager *Manager
 
 	// for accurate calculation of ETA
 
@@ -41,6 +42,8 @@ type Operation struct {
 
 	cancelFunc      context.CancelFunc
 	completedSignal chan byte // notifies goroutines linked to the operation of completion
+
+	pacingDelayMs int64 // dynamic pacing control
 }
 
 // NewOperation creates a new index operation and context to pass to *Operation.Run.
@@ -51,8 +54,10 @@ func (m *Manager) NewOperation(ctx context.Context, i *model.Index, db database.
 		db:              db,
 		log:             log,
 		bot:             b,
+		manager:         m,
 		cancelFunc:      cancel,
 		completedSignal: make(chan byte),
+		pacingDelayMs:   100, // starts at 100ms pacing delay
 	}
 }
 
@@ -262,7 +267,7 @@ func (o *Operation) run(ctx context.Context) {
 	}()
 
 	var fetchWG sync.WaitGroup
-	for i := 0; i < 3; i++ { // 3 parallel fetchers
+	for i := 0; i < 3; i++ { // 3 parallel fetcher workers
 		fetchWG.Add(1)
 		go func(workerID int) {
 			defer fetchWG.Done()
@@ -288,6 +293,14 @@ func (o *Operation) run(ctx context.Context) {
 						s, ok, _ := ParseMtProtoFloodwait(err)
 						if ok && s != 0 {
 							o.log.Warn("index: floodwait detected, retrying chunk", zap.Int64("seconds", s), zap.Int("worker", workerID))
+							
+							// Dynamic backoff: Increase pacing delay on floodwait
+							o.mu.Lock()
+							if o.pacingDelayMs < 1000 {
+								o.pacingDelayMs += 150
+							}
+							o.mu.Unlock()
+
 							time.Sleep(time.Second * time.Duration(s+1))
 							continue
 						}
@@ -300,6 +313,13 @@ func (o *Operation) run(ctx context.Context) {
 						o.log.Error("index: skipping chunk after maximum retries", zap.Int("worker", workerID))
 						continue
 					}
+
+					// Dynamic throttle reduction: Decrease pacing delay slowly on success to find maximum safe rate
+					o.mu.Lock()
+					if o.pacingDelayMs > 80 {
+						o.pacingDelayMs -= 5
+					}
+					o.mu.Unlock()
 
 					msgs := make([]telegram.Message, 0)
 					switch m := rawMsgs.(type) {
@@ -317,6 +337,12 @@ func (o *Operation) run(ctx context.Context) {
 					case <-ctx.Done():
 						return
 					}
+
+					// Adaptive sleep duration
+					o.mu.Lock()
+					delay := time.Duration(o.pacingDelayMs) * time.Millisecond
+					o.mu.Unlock()
+					time.Sleep(delay)
 				}
 			}
 		}(i)
@@ -328,6 +354,9 @@ func (o *Operation) run(ctx context.Context) {
 
 	// Notify completion
 	close(o.completedSignal)
+	if o.manager != nil {
+		o.manager.RemoveOperationIfSame(o.ID, o)
+	}
 
 	o.pushToDB()
 

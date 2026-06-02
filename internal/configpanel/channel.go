@@ -134,18 +134,7 @@ func ChannelField(app AppPreview, fieldName string, opts ChannelFieldOpts) panel
 					continue
 				}
 
-				var isRequest bool
-				if s, ok := data.GetArg(2); ok {
-					isRequest, _ = strconv.ParseBool(s)
-				} else if opts.AllowRequestInvite && len(ids) == 1 {
-					// Only ask for request invite if exactly one ID was sent
-					return fmt.Sprintf("<b>Would you like to add %s as a request invite channel?</b>", chat.Title),
-						[][]gotgbot.InlineKeyboardButton{{
-							{Text: "ʏᴇs ✅", CallbackData: ctx.CallbackData.AddArg(fmt.Sprint(chatID)).AddArg("1").ToString(), Style: "success"},
-							{Text: "ɴᴏ ❌", CallbackData: ctx.CallbackData.AddArg(fmt.Sprint(chatID)).AddArg("0").ToString(), Style: "danger"},
-						}},
-						nil
-				}
+				isRequest := true
 
 				link, err := ctx.Bot.CreateChatInviteLink(chat.Id, &gotgbot.CreateChatInviteLinkOpts{Name: fieldName, CreatesJoinRequest: isRequest})
 				if err != nil {
@@ -188,17 +177,13 @@ func ChannelField(app AppPreview, fieldName string, opts ChannelFieldOpts) panel
 				return "", nil, err
 			}
 
-			var (
-				channel      model.Channel
-				channelIndex *int
-			)
+			var channelIndex *int
 
 			for i, c := range currentChannels {
 				if c.ID != channelID {
 					continue
 				}
 
-				channel = c
 				channelIndex = &i
 			}
 
@@ -206,7 +191,7 @@ func ChannelField(app AppPreview, fieldName string, opts ChannelFieldOpts) panel
 				return "Channel was not found in saved channels!", nil, nil
 			}
 
-			link, err := ctx.Bot.CreateChatInviteLink(chat.Id, &gotgbot.CreateChatInviteLinkOpts{Name: fieldName, CreatesJoinRequest: channel.CreatesJoinRequest})
+			link, err := ctx.Bot.CreateChatInviteLink(chat.Id, &gotgbot.CreateChatInviteLinkOpts{Name: fieldName, CreatesJoinRequest: true})
 			if err != nil {
 				app.GetLog().Debug("configpanel: channel: failed to generate invite link", zap.Int64("id", chat.Id), zap.Error(err))
 				return "Failed to Create Invite Link. Please Make Sure the bot has Permissions to Add Users", nil, nil
@@ -214,6 +199,7 @@ func ChannelField(app AppPreview, fieldName string, opts ChannelFieldOpts) panel
 
 			currentChannels[*channelIndex].Title = chat.Title
 			currentChannels[*channelIndex].InviteLink = link.InviteLink
+			currentChannels[*channelIndex].CreatesJoinRequest = true
 
 			app.GetDB().UpdateConfig(ctx.Bot.Id, config.FieldNameFsub, currentChannels)
 			go app.RefreshConfig()

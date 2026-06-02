@@ -10,6 +10,8 @@ const (
 	FieldNameHelp              = "help"
 	FieldNamePrivacy           = "privacy"
 	FieldNameStats             = "stats"
+	FieldNameMovies            = "movies"
+	FieldNameSeries            = "series"
 	FieldNameShortener         = "shortener"
 	FieldNameNoResultText      = "no_result_text"
 	FieldNameResultTemplate    = "af_template"
@@ -29,6 +31,10 @@ const (
 	FieldNameResultButtonUrl   = "result_btn_url"
 	FieldNameNewMoviesUrl      = "new_movies_url"
 	FieldNameUpdatesUrl        = "updates_url"
+	FieldNameLatestReleasesUrl = "latest_releases_url"
+	FieldNameResultsChannel    = "results_channel"
+	FieldNameResultsChannelID  = "results_channel_id"
+	FieldNameFileChannels      = "file_channels"
 )
 
 // ToMap converts the contents of the struct into map so fields can be dynamically accessed.
@@ -54,6 +60,8 @@ func (c *Config) toMap() map[string]any {
 	vals[FieldNameHelp] = c.GetHelpMessage()
 	vals[FieldNamePrivacy] = c.GetPrivacyMessage()
 	vals[FieldNameStats] = c.GetStatsMessage()
+	vals[FieldNameMovies] = c.GetMoviesMessage()
+	vals[FieldNameSeries] = c.GetSeriesMessage()
 
 	vals[FieldNameShortener] = c.GetShortener()
 	vals[FieldNameNoResultText] = c.GetNoResultText()
@@ -79,6 +87,10 @@ func (c *Config) toMap() map[string]any {
 	vals[FieldNameResultButtonUrl] = c.ResultButtonUrl
 	vals[FieldNameNewMoviesUrl] = c.NewMoviesUrl
 	vals[FieldNameUpdatesUrl] = c.UpdatesUrl
+	vals[FieldNameLatestReleasesUrl] = c.LatestReleasesUrl
+	vals[FieldNameResultsChannel] = c.ResultsChannel
+	vals[FieldNameResultsChannelID] = c.ResultsChannelID
+	vals[FieldNameFileChannels] = c.FileChannels
 
 	return vals
 }

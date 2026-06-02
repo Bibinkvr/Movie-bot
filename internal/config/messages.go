@@ -72,7 +72,7 @@ func (c *Config) GetAboutMessage() *message.Message {
 > os        : <code>{os}</code>  
 > database  : <code>{database}</code>  
 
-> version   : <code>v0.5</code>
+> version   : <code>v0.6</code>
 
 Latency <code>{latency}</code>`
 	}
@@ -110,6 +110,8 @@ func (c *Config) GetHelpMessage() *message.Message {
 /start - check if I'm alive
 /about - learn a bit about me
 /help - get this message
+/movies - movie request format/instructions
+/series - series request format/instructions
 /stats - some number crushing
 /privacy - what data I steal
 /uinfo - get user data stored
@@ -130,7 +132,92 @@ func (c *Config) GetHelpMessage() *message.Message {
 		buttons = c.HelpButtons
 	} else {
 		buttons = [][]button.InlineKeyboardButton{
+			{{Text: "🎥 Movie Format", CallbackData: "cmd:movies", Style: "primary"}, {Text: "📺 Series Format", CallbackData: "cmd:series", Style: "primary"}},
 			{{Text: "« ʙᴀᴄᴋ", CallbackData: "cmd:start", Style: "primary"}, {Text: "ᴘʀɪᴠᴀᴄʏ", CallbackData: "cmd:privacy", Style: "primary"}},
+		}
+	}
+
+	return &message.Message{
+		Text:     text,
+		Keyboard: buttons,
+	}
+}
+
+func (c *Config) GetMoviesMessage() *message.Message {
+	var (
+		text    string
+		buttons [][]button.InlineKeyboardButton
+	)
+
+	if c.MoviesText != "" {
+		text = c.MoviesText
+	} else {
+		text = `⚠️❗️ <b>𝗠𝗼𝘃𝗶𝗲 𝗥𝗲𝗾𝘂𝗲𝘀𝘁 𝗙𝗼𝗿𝗺𝗮𝘁</b> ❗️⚠️
+
+📝 𝖬𝗈𝗏𝗂𝖾 𝖭𝖺𝗆𝖾, 𝖸𝖾𝖺𝗋,(𝖨𝖿 𝗒𝗈𝗎 𝖪𝗇𝗈𝗐) 𝖶𝗂𝗍𝗁 𝖢𝗈𝗋𝗋𝖾𝖼𝗍 𝖲𝗉𝖾𝗅𝗅𝗂𝗇𝗀 📚
+
+🗣 𝖨𝖿 𝖨𝗍 𝗂𝗌 𝖺 𝖥𝗂𝗅𝗆 𝖲𝖾𝗋𝗂𝖾𝗌. 𝖱𝖾𝗊𝗎𝖾𝗌𝗍 𝖮𝗇𝖾 𝖡𝗒 𝖮𝗇𝖾 𝖶𝗂𝗍𝗁 𝖯𝗋𝗈𝗉𝖾𝗋 𝖭𝖺𝗆𝖾 🧠
+
+🖇<b>𝐄𝐱𝐚𝐦𝐩𝐥𝐞:</b>
+• <code>Robin Hood</code> ✅
+• <code>Robin Hood 2010</code> ✅
+• <code>Kurup 2021 Kan</code> ✅ 
+• <code>Harry Potter and the Philosophers Stone</code> ✅
+• <code>Harry Potter and the Prisoner of Azkaban</code> ✅
+
+🥱 𝖥𝗈𝗋 𝖫𝖺𝗇𝗀𝗎𝖺𝗀𝖾 𝖠𝗎𝖽𝗂𝗈𝗌 - 𝖪𝖺𝗇 𝖿𝗈𝗋 𝖪𝖺𝗇𝗇𝖺𝖽𝖺, 𝖬𝖺𝗅 - 𝖬𝖺𝗅𝖺𝗒𝖺𝗅𝖺𝗆, 𝖳𝖺𝗆 - 𝖳𝖺𝗆𝗂𝗅
+
+🔎 𝖴𝗌𝖾 𝖥𝗂𝗋𝗌𝗍 3 𝖫𝖾𝗍𝗍𝖾𝗋𝗌 𝖮𝖿 𝖫𝖺𝗇𝗀𝗎𝖺𝗀𝖾 𝖥𝗈𝗋 𝖠𝗎𝖽𝗂𝗈𝗌 [𝖪𝖺𝗇 𝖳𝖺𝗆 𝖳𝖾𝗅 𝖬𝖺𝗅 𝖧𝗂𝗇 𝖲𝗉𝖺 𝖤𝗇𝗀 𝖪𝗈𝗋 𝖾𝗍𝖼...]
+
+❌ <b>[Don't Use words Like Dubbed/Movies/Send/HD , . : - etc]</b> ❌`
+	}
+
+	if len(c.MoviesButtons) != 0 {
+		buttons = c.MoviesButtons
+	} else {
+		buttons = [][]button.InlineKeyboardButton{
+			{{Text: "« ʙᴀᴄᴋ", CallbackData: "cmd:help", Style: "primary"}, button.CloseLocal()},
+		}
+	}
+
+	return &message.Message{
+		Text:     text,
+		Keyboard: buttons,
+	}
+}
+
+func (c *Config) GetSeriesMessage() *message.Message {
+	var (
+		text    string
+		buttons [][]button.InlineKeyboardButton
+	)
+
+	if c.SeriesText != "" {
+		text = c.SeriesText
+	} else {
+		text = `⚠️❗️ <b>𝗦𝗲𝗿𝗶𝗲𝘀 𝗥𝗲𝗾𝘂𝗲𝘀𝘁 𝗙𝗼𝗿𝗺𝗮𝘁</b> ❗️⚠️
+
+🗣 𝖲𝖾𝗋𝗂𝖾𝗌 𝖭𝖺𝗆𝖾,𝖲𝖾𝖺𝗌𝗈𝗇 (𝖶𝗁𝗂𝖼𝗁 𝖲𝖾𝖺𝗌𝗈𝗇 𝗒𝗈𝗎 𝗐𝖺𝗇𝗍) 🧠
+
+🖇<b>Example:</b> 
+• <code>Game Of Thrones S03E02 720p</code> ✅
+• <code>Sex Education S02 720p</code> ✅ 
+• <code>Breaking Bad S01E05</code> ✅ 
+• <code>Prison Break 1080p</code> ✅ 
+• <code>Witcher S02</code> ✅
+
+🥱 𝖥𝗈𝗋 𝖲𝖾𝖺𝗌𝗈𝗇 𝖬𝖾𝗇𝗍𝗂𝗈𝗇 𝖠𝗌 𝖲01 𝖥𝗈𝗋 𝖲𝖾𝖺𝗌𝗈𝗇 1, 𝖲02 𝖥𝗈𝗋 𝖲𝖾𝖺𝗌𝗈𝗇 2 𝖾𝗍𝖼 [𝖲03,𝖲04,𝖲06,𝖲10,𝖲17] 𝖦𝗈𝖾𝗌 𝖫𝗂𝗄𝖾 𝖳𝗁𝖺𝗍
+
+🔎 𝖥𝗈𝗋 𝖤𝗉𝗂𝗌𝗈𝖽𝖾 𝖬𝖾𝗇𝗍𝗂𝗈𝗇 𝖠𝗌 𝖤𝗉01 𝖥𝗈𝗋 𝖤𝗉𝗂𝗌𝗈𝖽𝖾 1, 𝖤𝗉02 𝖥𝗈𝗋 𝖤𝗉𝗂𝗌𝗈𝖽𝖾 2 𝖾𝗍𝖼 [𝖤𝗉03,𝖤𝗉07,𝖤𝗉17,𝖤𝗉21] 𝖦𝗈'𝗌 𝖫𝗂𝗄𝖾 𝖳𝗁𝖺𝗍 
+
+❌ <b>[Don't Use words Like Season/Episode/Series , . : - etc]</b> ❌`
+	}
+
+	if len(c.SeriesButtons) != 0 {
+		buttons = c.SeriesButtons
+	} else {
+		buttons = [][]button.InlineKeyboardButton{
+			{{Text: "« ʙᴀᴄᴋ", CallbackData: "cmd:help", Style: "primary"}, button.CloseLocal()},
 		}
 	}
 

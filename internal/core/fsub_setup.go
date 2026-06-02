@@ -7,6 +7,7 @@ import (
 
 	"autofilterbot/internal/config"
 	"autofilterbot/internal/model"
+	"autofilterbot/pkg/conversation"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"go.uber.org/zap"
@@ -110,15 +111,35 @@ func SetFsub(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	args := ctx.Args()
-	if len(args) < 2 {
-		_, err := ctx.Message.Reply(bot, "<b>𝖴𝗌𝖺𝗀𝖾:</b> <code>/fsub &lt;ID1&gt; &lt;ID2&gt; ...</code>\n<i>𝖸𝗈𝗎 𝖼𝖺𝗇 𝗎𝗌𝖾 𝗌𝗉𝖺𝖼𝖾𝗌 𝗈𝗋 𝖼𝗈𝗆𝗆𝖺𝗌 𝗍𝗈 𝗌𝖾𝗉𝖺𝗋𝖺𝗍𝖾 𝖨𝖣𝗌.</i>", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
-		return err
-	}
+	var ids []string
+	var replyToMsg *gotgbot.Message
 
-	rawArgs := strings.Join(args[1:], " ")
-	rawArgs = strings.ReplaceAll(rawArgs, ",", " ")
-	ids := strings.Fields(rawArgs)
+	if ctx.CallbackQuery != nil {
+		conv := conversation.NewConversatorFromUpdate(bot, ctx.Update)
+		askM, err := conv.Ask(_app.Ctx, "<b>𝖯𝗅𝖾𝖺𝗌𝖾 𝗌𝖾𝗇𝖽 𝗍𝗁𝖾 𝖥𝗈𝗋𝖼𝖾𝖲𝗎𝖻 𝖼𝗁𝖺𝗇𝗇𝖾𝗅 𝖨𝖣𝗌 (separated by spaces or commas):</b>", &gotgbot.SendMessageOpts{
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "❌ Cancel", CallbackData: "admin:cancel"}}},
+			},
+			ParseMode: gotgbot.ParseModeHTML,
+		})
+		if err != nil {
+			return nil
+		}
+		rawInput := strings.TrimSpace(askM.Text)
+		rawInput = strings.ReplaceAll(rawInput, ",", " ")
+		ids = strings.Fields(rawInput)
+		replyToMsg = askM
+	} else {
+		args := ctx.Args()
+		if len(args) < 2 {
+			_, err := ctx.Message.Reply(bot, "<b>𝖴𝗌𝖺𝗀𝖾:</b> <code>/fsub &lt;ID1&gt; &lt;ID2&gt; ...</code>\n<i>𝖸𝗈𝗎 𝖼𝖺𝗇 𝗎𝗌𝖾 𝗌𝗉𝖺𝖼𝖾𝗌 𝗈𝗋 𝖼𝗈𝗆𝗆𝖺𝗌 𝗍𝗈 𝗌𝖾𝗉𝖺𝗋𝖺𝗍𝖾 𝖨𝖣𝗌.</i>", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+			return err
+		}
+		rawArgs := strings.Join(args[1:], " ")
+		rawArgs = strings.ReplaceAll(rawArgs, ",", " ")
+		ids = strings.Fields(rawArgs)
+		replyToMsg = ctx.Message
+	}
 
 	var (
 		newChannels []model.Channel
@@ -161,7 +182,9 @@ func SetFsub(bot *gotgbot.Bot, ctx *ext.Context) error {
 		err := _app.DB.UpdateConfig(bot.Id, config.FieldNameFsub, newChannels)
 		if err != nil {
 			_app.Log.Error("set_fsub: update config failed", zap.Error(err))
-			_, err := ctx.Message.Reply(bot, "<b>📛 Database Update Failed!</b>", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+			if replyToMsg != nil {
+				_, err = replyToMsg.Reply(bot, "<b>📛 Database Update Failed!</b>", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+			}
 			return err
 		}
 		_app.RefreshConfig()
@@ -175,6 +198,9 @@ func SetFsub(bot *gotgbot.Bot, ctx *ext.Context) error {
 		res += "❌ <b>Failed:</b> " + strings.Join(failed, ", ") + "\n"
 	}
 
-	_, err := ctx.Message.Reply(bot, res, &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
-	return err
+	if replyToMsg != nil {
+		_, err := replyToMsg.Reply(bot, res, &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+		return err
+	}
+	return nil
 }

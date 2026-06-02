@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"autofilterbot/internal/button"
 	"autofilterbot/internal/fsub"
+	"autofilterbot/internal/functions"
 	"autofilterbot/internal/limiter"
 	"autofilterbot/internal/model"
 	"autofilterbot/pkg/conversation"
@@ -17,7 +19,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Broadcast handles the /broadcast command to copy msg to all bot users.
+// Broadcast handles the /broadcast command to show a preview and confirm before sending.
 func Broadcast(bot *gotgbot.Bot, ctx *ext.Context) error {
 	ok, _ := fsub.CheckFsub(_app, bot, ctx)
 	if !ok {
@@ -29,18 +31,20 @@ func Broadcast(bot *gotgbot.Bot, ctx *ext.Context) error {
 
 	m := ctx.EffectiveMessage
 	var (
-		opts   send.SendOpts
-		method send.SendMethod
+		opts      send.SendOpts
+		method    send.SendMethod
+		methodStr string
 	)
 
 	if replyM := m.ReplyToMessage; replyM != nil {
-		sendMethod, text, fileId, err := sendOptsFromMessage(replyM)
+		methodName, sendMethod, text, fileId, err := sendOptsFromMessage(replyM)
 		if err != nil {
 			m.Reply(bot, "<b>⛔ 𝖱𝖾𝗉𝗅𝗂𝖾𝖽 𝖬𝖾𝗌𝗌𝖺𝗀𝖾 𝖢𝗈𝗇𝗍𝖺𝗂𝗇𝗌 𝖴𝗇𝗌𝗎𝗉𝗉𝗈𝗋𝗍𝖾𝖽 𝖬𝖾𝖽𝗂𝖺!</b>", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 			return nil
 		}
 
 		method = sendMethod
+		methodStr = methodName
 		opts.Text += text
 		opts.FileId = fileId
 
@@ -55,32 +59,35 @@ func Broadcast(bot *gotgbot.Bot, ctx *ext.Context) error {
 			opts.Text += " " + split[1]
 			if method == nil {
 				method = send.SendMessage
+				methodStr = "text"
 			}
 		}
 	}
 
 	if method == nil {
-		m, err := conversation.NewConversatorFromUpdate(bot, ctx.Update).Ask(_app.Ctx, "<b>𝖯𝗅𝖾𝖺𝗌𝖾 𝖲𝖾𝗇𝖽 𝗍𝗁𝖾 𝖬𝖾𝗌𝗌𝖺𝗀𝖾 𝗍𝗈 𝖻𝖾 𝖡𝗋𝗈𝖺𝖽𝖼𝖺𝗌𝗍𝖾𝖽:</b>", &gotgbot.SendMessageOpts{
+		promptMsg, err := conversation.NewConversatorFromUpdate(bot, ctx.Update).Ask(_app.Ctx, "<b>𝖯𝗅𝖾𝖺𝗌𝖾 𝖲𝖾𝗇𝖽 𝗍𝗁𝖾 𝖬𝖾𝗌𝗌𝖺𝗀𝖾 𝗍𝗈 𝖻𝖾 𝖡𝗋𝗈𝖺𝖽𝖼𝖺𝗌𝗍𝖾𝖽:</b>", &gotgbot.SendMessageOpts{
 			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "❌ Cancel", CallbackData: "admin:cancel"}}},
 			},
+			ParseMode: gotgbot.ParseModeHTML,
 		})
 		if err != nil {
 			return nil
 		}
 
-		sendMethod, text, fileId, err := sendOptsFromMessage(m)
+		methodName, sendMethod, text, fileId, err := sendOptsFromMessage(promptMsg)
 		if err != nil {
-			m.Reply(bot, "<b>⛔ 𝖬𝖾𝗌𝗌𝖺𝗀𝖾 𝖢𝗈𝗇𝗍𝖺𝗂𝗇𝗌 𝖴𝗇𝗌𝗎𝗉𝗉𝗈𝗋𝗍𝖾𝖽 𝖬𝖾𝖽𝗂𝖺!</b>", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+			promptMsg.Reply(bot, "<b>⛔ 𝖬𝖾𝗌𝗌𝖺𝗀𝖾 𝖢𝗈𝗇𝗍𝖺𝗂𝗇𝗌 𝖴𝗇𝗌𝗎𝗉𝗉𝗈𝗋𝗍𝖾𝖽 𝖬𝖾𝖽𝗂𝖺!</b>", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 			return nil
 		}
 
 		method = sendMethod
+		methodStr = methodName
 		opts.Text += text
 		opts.FileId = fileId
 
-		if m.ReplyMarkup != nil && len(m.ReplyMarkup.InlineKeyboard) != 0 {
-			opts.Keyboard = append(opts.Keyboard, m.ReplyMarkup.InlineKeyboard...)
+		if promptMsg.ReplyMarkup != nil && len(promptMsg.ReplyMarkup.InlineKeyboard) != 0 {
+			opts.Keyboard = append(opts.Keyboard, promptMsg.ReplyMarkup.InlineKeyboard...)
 		}
 	}
 
@@ -93,87 +100,367 @@ func Broadcast(bot *gotgbot.Bot, ctx *ext.Context) error {
 	opts.Text = parsedText
 	opts.Keyboard = append(opts.Keyboard, button.UnwrapKeyboard(keyboard)...)
 
-	users, err := _app.DB.GetAllUsers()
+	// Fetch user count for confirmation message info
+	usersCursor, err := _app.DB.GetAllUsers()
 	if err != nil {
 		m.Reply(bot, "Fetch Users From Database Failed :/", nil)
-		_app.Log.Warn("broadcast: get all users failed", zap.Error(err))
+		return nil
+	}
+	var totalUsers int
+	for usersCursor.Next(context.Background()) {
+		totalUsers++
+	}
+	usersCursor.Close(context.Background())
+
+	// Create pending broadcast in DB
+	bId := fmt.Sprintf("bc_%d", time.Now().UnixNano())
+	bRecord := &model.Broadcast{
+		ID:             bId,
+		Text:           opts.Text,
+		FileId:         opts.FileId,
+		Method:         methodStr,
+		InlineKeyboard: opts.Keyboard,
+		CreatedAt:      time.Now(),
+		Status:         "pending",
+		Total:          totalUsers,
+	}
+
+	err = _app.DB.SaveBroadcast(bRecord)
+	if err != nil {
+		m.Reply(bot, fmt.Sprintf("Failed to save pending broadcast: %v", err), nil)
 		return nil
 	}
 
-	progressM, err := bot.SendMessage(m.Chat.Id, "Sᴛᴀʀᴛɪɴɢ Bʀᴏᴀᴅᴄᴀsᴛ...", nil)
+	// Send Preview
+	previewMsg, err := method(bot, m.Chat.Id, &opts)
 	if err != nil {
-		_app.Log.Warn("broadcast: send progress msg failed", zap.Error(err))
+		m.Reply(bot, fmt.Sprintf("<b>⛔ Failed to generate preview:</b> <code>%s</code>", err.Error()), &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+		_app.DB.DeleteBroadcast(bId)
 		return nil
 	}
+
+	// Send Confirm Panel
+	confirmText := fmt.Sprintf(`<b>☝️ ABOVE IS THE PREVIEW OF THE BROADCAST</b>
+
+<b>📢 Broadcast ID:</b> <code>%s</code>
+<b>📝 Message Type:</b> <code>%s</code>
+<b>👥 Target Users:</b> <code>%d</code>
+
+<i>Click confirm below to start the broadcast:</i>`, bId, methodStr, totalUsers)
+
+	_, err = bot.SendMessage(m.Chat.Id, confirmText, &gotgbot.SendMessageOpts{
+		ParseMode: gotgbot.ParseModeHTML,
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+				{
+					{Text: "⚡ Confirm & Send", CallbackData: "admin:bc_send:" + bId},
+					{Text: "❌ Cancel", CallbackData: "admin:bc_cancel:" + bId},
+				},
+			},
+		},
+		ReplyParameters: &gotgbot.ReplyParameters{MessageId: previewMsg.MessageId},
+	})
+	if err != nil {
+		_app.Log.Warn("broadcast: send confirm panel failed", zap.Error(err))
+	}
+
+	return nil
+}
+
+// HandleConfirmBroadcast handles confirmed broadcast and runs it in a goroutine.
+func HandleConfirmBroadcast(bot *gotgbot.Bot, ctx *ext.Context, bId string) error {
+	c := ctx.CallbackQuery
+	b, err := _app.DB.GetBroadcast(bId)
+	if err != nil {
+		c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Broadcast Not Found ❌", ShowAlert: true})
+		return nil
+	}
+
+	if b.Status != "pending" {
+		c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Broadcast Already Processed ⚠️", ShowAlert: true})
+		return nil
+	}
+
+	// Edit confirmation message to "Starting broadcast..."
+	_, _, err = c.Message.EditText(bot, "<b>Sᴛᴀʀᴛɪɴɢ Bʀᴏᴀᴅᴄᴀsᴛ... 🚀</b>\n<i>Please wait...</i>", &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML})
+	if err != nil {
+		_app.Log.Warn("broadcast: edit status to starting failed", zap.Error(err))
+	}
+
+	// Update status in DB
+	err = _app.DB.UpdateBroadcast(bId, map[string]interface{}{"status": "sending"})
+	if err != nil {
+		_app.Log.Warn("broadcast: update status failed", zap.Error(err))
+	}
+
+	// Start goroutine to do the broadcast!
+	go RunBroadcast(bot, bId, c.Message.GetChat().Id, c.Message.GetMessageId())
+
+	return nil
+}
+
+// HandleCancelBroadcast cancels the broadcast (deletes pending or updates status to cancelled).
+func HandleCancelBroadcast(bot *gotgbot.Bot, ctx *ext.Context, bId string) error {
+	c := ctx.CallbackQuery
+	b, err := _app.DB.GetBroadcast(bId)
+	if err == nil && b != nil {
+		if b.Status == "pending" {
+			_app.DB.DeleteBroadcast(bId)
+		} else if b.Status == "sending" {
+			_app.DB.UpdateBroadcast(bId, map[string]interface{}{"status": "cancelled"})
+		}
+	}
+
+	c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Broadcast Cancelled ❌"})
+	_, err = c.Message.Delete(bot, nil)
+	return err
+}
+
+// RunBroadcast executes the broadcast in the background and reports progress.
+func RunBroadcast(bot *gotgbot.Bot, bId string, adminChatId int64, progressMessageId int64) {
+	b, err := _app.DB.GetBroadcast(bId)
+	if err != nil {
+		_app.Log.Error("RunBroadcast: failed to get broadcast", zap.String("id", bId), zap.Error(err))
+		return
+	}
+
+	usersCursor, err := _app.DB.GetAllUsers()
+	if err != nil {
+		_app.Log.Error("RunBroadcast: failed to get all users", zap.Error(err))
+		return
+	}
+
+	var userSlice []model.User
+	for usersCursor.Next(context.Background()) {
+		var u model.User
+		if err := usersCursor.Decode(&u); err == nil {
+			userSlice = append(userSlice, u)
+		}
+	}
+	usersCursor.Close(context.Background())
 
 	p := newBroadcastProgress()
+	p.total = len(userSlice)
 
-	for users.Next(context.Background()) {
-		var u model.User
+	method := MethodFromString(b.Method)
+	opts := &send.SendOpts{
+		Text:     b.Text,
+		FileId:   b.FileId,
+		Keyboard: b.InlineKeyboard,
+	}
 
-		err = users.Decode(&u)
-		if err != nil {
-			_app.Log.Warn("braodcast: decode user failed", zap.Error(err))
-			continue
+	var sentMsgs []model.BroadcastMessage
+
+	for _, u := range userSlice {
+		if _app.Ctx.Err() != nil {
+			bot.EditMessageText(
+				p.BuildMessage().WriteLn("<code>Broadcast Cancelled Due to Application Stopping</code>").String(),
+				&gotgbot.EditMessageTextOpts{
+					ChatId:    adminChatId,
+					MessageId: progressMessageId,
+					ParseMode: gotgbot.ParseModeHTML,
+				},
+			)
+			break
 		}
 
-		limiter.Wait()
-		_, err = method(bot, u.UserId, &opts)
-		if err != nil {
-			p.failed++
+		// Double-check if the broadcast was cancelled by admin dynamically
+		if currB, err := _app.DB.GetBroadcast(bId); err == nil && currB.Status == "cancelled" {
+			bot.EditMessageText(
+				p.BuildMessage().WriteLn("<code>Broadcast Cancelled By Admin ❌</code>").String(),
+				&gotgbot.EditMessageTextOpts{
+					ChatId:    adminChatId,
+					MessageId: progressMessageId,
+					ParseMode: gotgbot.ParseModeHTML,
+				},
+			)
+			return
+		}
 
-			errStr := err.Error()
+		var success bool
+		var lastErr error
+		var sentM *gotgbot.Message
+
+		userOpts := *opts
+		// Antiban / anti-spam: append dynamic zero-width space characters to randomize message hash
+		paddingCount := int((time.Now().UnixNano() / 1000) % 10) + 1
+		userOpts.Text = b.Text + strings.Repeat("\u200B", paddingCount)
+
+		for attempt := 0; attempt < 3; attempt++ {
+			limiter.Wait()
+
+			// Dynamic organic jitter (0-50ms) to bypass robotic pattern matching
+			time.Sleep(time.Millisecond * time.Duration(time.Now().UnixNano()%50))
+
+			sentM, lastErr = method(bot, u.UserId, &userOpts)
+			if lastErr == nil {
+				success = true
+				break
+			}
+
+			if floodErr, ok := functions.AsFloodWait(lastErr); ok {
+				_app.Log.Info("broadcast: flood wait detected, sleeping", zap.Int64("duration_seconds", floodErr.Duration), zap.Int64("user_id", u.UserId))
+				floodErr.Wait()
+				attempt--
+				continue
+			}
+
+			if functions.IsChatNotFoundErr(lastErr) || strings.Contains(lastErr.Error(), "deactivated") {
+				break
+			}
+
+			time.Sleep(time.Second * time.Duration(attempt+1))
+		}
+
+		if !success {
+			p.failed++
+			errStr := lastErr.Error()
 			switch {
 			case strings.Contains(errStr, "blocked"):
 				_app.DB.DeleteUser(u.UserId)
 				p.blocked++
-			case strings.Contains(errStr, "deleted"): //TODO: not sure what error msg for deleted acc is
+			case strings.Contains(errStr, "deactivated") || strings.Contains(errStr, "deleted"):
 				_app.DB.DeleteUser(u.UserId)
 				p.deleted++
 			case strings.Contains(errStr, "chat not found"):
 				_app.DB.DeleteUser(u.UserId)
-				fallthrough
+				p.blocked++
 			default:
 				p.otherErr++
-				_app.Log.Info("broadcast: failed to send", zap.Int64("chat_id", u.UserId), zap.Error(err))
+				_app.Log.Info("broadcast: failed to send", zap.Int64("chat_id", u.UserId), zap.Error(lastErr))
 			}
 		} else {
 			p.success++
+			if sentM != nil {
+				sentMsgs = append(sentMsgs, model.BroadcastMessage{
+					UserId:    u.UserId,
+					MessageId: sentM.MessageId,
+				})
+			}
 		}
 
-		p.total++
-
-		if p.total%50 == 0 {
-			_, _, err = progressM.EditText(
-				bot,
+		// Update progress in chat every 50 users
+		if (p.success+p.failed)%50 == 0 || (p.success+p.failed) == p.total {
+			bot.EditMessageText(
 				p.BuildMessage().String(),
-				&gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML},
+				&gotgbot.EditMessageTextOpts{
+					ChatId:    adminChatId,
+					MessageId: progressMessageId,
+					ParseMode: gotgbot.ParseModeHTML,
+				},
 			)
-		}
-		if err != nil {
-			_app.Log.Debug("broadcast: update progress failed", zap.Error(err))
-		}
-
-		if _app.Ctx.Err() != nil {
-			progressM.EditText(
-				bot,
-				p.BuildMessage().WriteLn("<code>Broadcast Cancelled Due to Application Stopping</code>").String(),
-				&gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML},
-			)
-			break
+			// Save progressive stats to database
+			_app.DB.UpdateBroadcast(bId, map[string]interface{}{
+				"success":       p.success,
+				"failed":        p.failed,
+				"blocked":       p.blocked,
+				"deleted":       p.deleted,
+				"other_err":     p.otherErr,
+				"sent_messages": sentMsgs,
+			})
 		}
 	}
 
-	_, _, err = progressM.EditText(
-		bot,
+	// Finished!
+	_app.DB.UpdateBroadcast(bId, map[string]interface{}{
+		"status":        "completed",
+		"success":       p.success,
+		"failed":        p.failed,
+		"blocked":       p.blocked,
+		"deleted":       p.deleted,
+		"other_err":     p.otherErr,
+		"sent_messages": sentMsgs,
+	})
+
+	bot.EditMessageText(
 		p.BuildMessage().WriteLn("<code>Broadcast Completed Successfully ✅</code>").String(),
-		&gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML},
+		&gotgbot.EditMessageTextOpts{
+			ChatId:      adminChatId,
+			MessageId:   progressMessageId,
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "🔙 Back to Panel", CallbackData: "admin:back"}}}},
+		},
 	)
+}
+
+// HandleDeleteBroadcastMessages recall-deletes the broadcasted messages from the users' chats.
+func HandleDeleteBroadcastMessages(bot *gotgbot.Bot, ctx *ext.Context, bId string) error {
+	c := ctx.CallbackQuery
+	b, err := _app.DB.GetBroadcast(bId)
 	if err != nil {
-		_app.Log.Warn("broadcast: update success msg failed", zap.Error(err))
+		c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Broadcast Not Found ❌", ShowAlert: true})
+		return nil
 	}
+
+	if len(b.SentMessages) == 0 {
+		c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "No Messages to Delete! ⚠️", ShowAlert: true})
+		return nil
+	}
+
+	c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Starting Deletion... 🗑️"})
+	
+	// Update status
+	_app.DB.UpdateBroadcast(bId, map[string]interface{}{"status": "deleting"})
+
+	// Edit details message to show deleting status
+	_, _, err = c.Message.EditText(bot, "<b>🗑️ Starting message deletion for broadcast...</b>\n<i>Please wait...</i>", &gotgbot.EditMessageTextOpts{ParseMode: gotgbot.ParseModeHTML})
+	if err != nil {
+		_app.Log.Warn("broadcast: edit status to deleting failed", zap.Error(err))
+	}
+
+	// Start deletion in a goroutine
+	go RunDeleteBroadcastMessages(bot, bId, c.Message.GetChat().Id, c.Message.GetMessageId())
 
 	return nil
+}
+
+// RunDeleteBroadcastMessages does the actual message deletion sequentially with rate limiters.
+func RunDeleteBroadcastMessages(bot *gotgbot.Bot, bId string, adminChatId int64, progressMessageId int64) {
+	b, err := _app.DB.GetBroadcast(bId)
+	if err != nil {
+		return
+	}
+
+	total := len(b.SentMessages)
+	deleted := 0
+	failed := 0
+
+	for i, sm := range b.SentMessages {
+		limiter.Wait()
+		_, err := bot.DeleteMessage(sm.UserId, sm.MessageId, nil)
+		if err != nil {
+			failed++
+		} else {
+			deleted++
+		}
+
+		if (i+1)%50 == 0 || i+1 == total {
+			bot.EditMessageText(
+				fmt.Sprintf("<b>🗑️ Deleting Broadcast Messages...</b>\n\nTotal: %d\nDeleted: %d\nFailed: %d", total, deleted, failed),
+				&gotgbot.EditMessageTextOpts{
+					ChatId:    adminChatId,
+					MessageId: progressMessageId,
+					ParseMode: gotgbot.ParseModeHTML,
+				},
+			)
+		}
+	}
+
+	// Update status and clear sent_messages to release DB memory/storage space
+	_app.DB.UpdateBroadcast(bId, map[string]interface{}{
+		"status":        "messages_deleted",
+		"sent_messages": []model.BroadcastMessage{},
+	})
+
+	bot.EditMessageText(
+		fmt.Sprintf("<b>✅ Message Deletion Completed !</b>\n\nSuccessfully deleted %d of %d messages.", deleted, total),
+		&gotgbot.EditMessageTextOpts{
+			ChatId:      adminChatId,
+			MessageId:   progressMessageId,
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "🔙 Back", CallbackData: "admin:bchist_view:" + bId}}}},
+		},
+	)
 }
 
 type broadcastProgress struct {
@@ -193,7 +480,6 @@ type broadcastProgressBuilder struct {
 	strings.Builder
 }
 
-// WriteLn writes a string to the buffer after a new line.
 func (b *broadcastProgressBuilder) WriteLn(s string) *broadcastProgressBuilder {
 	b.WriteString("\n" + s)
 	return b
@@ -207,33 +493,59 @@ func (p *broadcastProgress) BuildMessage() *broadcastProgressBuilder {
 𝖲𝗎𝖼𝖼𝖾𝗌𝗌: %d
 <blockquote>𝖥𝖺𝗂𝗅𝖾𝖽: %d
 	𝖡𝗅𝗈𝖼𝗄𝖾𝖽: %d
-	𝖣𝖾𝗅𝖾𝗍𝖾𝖽 %d
+	𝖣𝖾𝗅𝖾𝗍𝖾𝖽: %d
 	𝖮𝗍𝗁𝖾𝗋: %d</blockquote>`, p.total, p.success, p.failed, p.blocked, p.deleted, p.otherErr))
 
 	return &b
 }
 
+// MethodFromString converts a method name string back to SendMethod.
+func MethodFromString(s string) send.SendMethod {
+	switch s {
+	case "document":
+		return send.SendDocument
+	case "video":
+		return send.SendVideo
+	case "audio":
+		return send.SendAudio
+	case "photo":
+		return send.SendPhoto
+	case "animation":
+		return send.SendAnimation
+	case "text":
+		return send.SendMessage
+	default:
+		return send.SendMessage
+	}
+}
+
 // sendOptsFromMessage gets message send message opts from given message.
 //
 // Error is only returned if message has no supported media or text.
-func sendOptsFromMessage(m *gotgbot.Message) (method send.SendMethod, text, fileId string, err error) {
+func sendOptsFromMessage(m *gotgbot.Message) (methodName string, method send.SendMethod, text, fileId string, err error) {
 	switch {
 	case m.Document != nil:
+		methodName = "document"
 		method = send.SendDocument
 		fileId = m.Document.FileId
 	case m.Video != nil:
+		methodName = "video"
 		method = send.SendVideo
 		fileId = m.Video.FileId
 	case m.Audio != nil:
+		methodName = "audio"
 		method = send.SendAudio
 		fileId = m.Audio.FileId
 	case m.Photo != nil:
+		methodName = "photo"
 		method = send.SendPhoto
-		fileId = m.Photo[0].FileId
+		fileId = m.Photo[len(m.Photo)-1].FileId
 	case m.Animation != nil:
+		methodName = "animation"
 		method = send.SendAnimation
 		fileId = m.Animation.FileId
 	case m.Text != "":
+		methodName = "text"
 		method = send.SendMessage
 		text = m.OriginalHTML()
 	default:
@@ -245,4 +557,145 @@ func sendOptsFromMessage(m *gotgbot.Message) (method send.SendMethod, text, file
 	}
 
 	return
+}
+
+// ListBroadcastHistory shows the list of past broadcasts.
+func ListBroadcastHistory(bot *gotgbot.Bot, ctx *ext.Context) error {
+	c := ctx.CallbackQuery
+	list, err := _app.DB.GetAllBroadcasts()
+	if err != nil {
+		c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to fetch history ❌", ShowAlert: true})
+		return nil
+	}
+
+	var text string
+	var keyboard [][]gotgbot.InlineKeyboardButton
+
+	if len(list) == 0 {
+		text = "<b>📂 BROADCAST HISTORY</b>\n\n<i>No past broadcasts found.</i>"
+	} else {
+		text = "<b>📂 BROADCAST HISTORY</b>\n\n<i>Select a past broadcast to view detailed statistics and management options:</i>"
+		
+		// Limit to 10 most recent broadcasts for simplicity and speed
+		limit := 10
+		if len(list) < limit {
+			limit = len(list)
+		}
+		
+		for _, b := range list[:limit] {
+			timeStr := b.CreatedAt.Format("02 Jan 15:04")
+			
+			// Try to make a friendly title
+			title := b.Text
+			if title == "" {
+				title = "[" + b.Method + "]"
+			}
+			if len(title) > 25 {
+				title = title[:22] + "..."
+			}
+			// sanitize newlines and HTML tags from title
+			title = strings.ReplaceAll(title, "\n", " ")
+			title = strings.ReplaceAll(title, "<b>", "")
+			title = strings.ReplaceAll(title, "</b>", "")
+			title = strings.ReplaceAll(title, "<i>", "")
+			title = strings.ReplaceAll(title, "</i>", "")
+			
+			statusIcon := "⏳"
+			switch b.Status {
+			case "completed":
+				statusIcon = "✅"
+			case "cancelled":
+				statusIcon = "❌"
+			case "sending":
+				statusIcon = "🚀"
+			case "deleting":
+				statusIcon = "🗑️"
+			case "messages_deleted":
+				statusIcon = "🧹"
+			}
+			
+			btnText := fmt.Sprintf("%s %s (%s)", statusIcon, title, timeStr)
+			keyboard = append(keyboard, []gotgbot.InlineKeyboardButton{{
+				Text:         btnText,
+				CallbackData: "admin:bchist_view:" + b.ID,
+			}})
+		}
+	}
+
+	keyboard = append(keyboard, []gotgbot.InlineKeyboardButton{{
+		Text:         "🔙 Back to Admin",
+		CallbackData: "admin:back",
+	}})
+
+	_, _, err = c.Message.EditText(bot, text, &gotgbot.EditMessageTextOpts{
+		ParseMode:   gotgbot.ParseModeHTML,
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: keyboard},
+	})
+	return err
+}
+
+// ViewBroadcastDetails shows details of a specific broadcast.
+func ViewBroadcastDetails(bot *gotgbot.Bot, ctx *ext.Context, bId string) error {
+	c := ctx.CallbackQuery
+	b, err := _app.DB.GetBroadcast(bId)
+	if err != nil {
+		c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Broadcast Not Found ❌", ShowAlert: true})
+		return nil
+	}
+
+	timeStr := b.CreatedAt.Format("2006-01-02 15:04:05 MST")
+	
+	text := fmt.Sprintf(`<b>📊 BROADCAST DETAILS</b>
+
+<b>📢 ID:</b> <code>%s</code>
+<b>📅 Sent:</b> <code>%s</code>
+<b>📝 Type:</b> <code>%s</code>
+<b>⚡ Status:</b> <code>%s</code>
+
+<b>👥 Statistics:</b>
+<blockquote>• Target Users: %d
+• Success: %d
+• Failed: %d
+• Blocked: %d
+• Deleted: %d
+• Other: %d</blockquote>`, 
+		b.ID, timeStr, b.Method, b.Status, 
+		b.Total, b.Success, b.Failed, b.Blocked, b.Deleted, b.OtherErr)
+
+	var keyboard [][]gotgbot.InlineKeyboardButton
+
+	// Add action buttons based on status
+	if b.Status == "completed" && len(b.SentMessages) > 0 {
+		keyboard = append(keyboard, []gotgbot.InlineKeyboardButton{
+			{Text: "🗑️ Delete Messages", CallbackData: "admin:bchist_delmsg:" + b.ID},
+		})
+	}
+	
+	// Delete log record option
+	keyboard = append(keyboard, []gotgbot.InlineKeyboardButton{
+		{Text: "❌ Delete Record", CallbackData: "admin:bchist_delrec:" + b.ID},
+	})
+
+	keyboard = append(keyboard, []gotgbot.InlineKeyboardButton{
+		{Text: "🔙 Back to History", CallbackData: "admin:bchistory"},
+	})
+
+	_, _, err = c.Message.EditText(bot, text, &gotgbot.EditMessageTextOpts{
+		ParseMode:   gotgbot.ParseModeHTML,
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: keyboard},
+	})
+	return err
+}
+
+// HandleDeleteBroadcastRecord deletes the broadcast document from history database.
+func HandleDeleteBroadcastRecord(bot *gotgbot.Bot, ctx *ext.Context, bId string) error {
+	c := ctx.CallbackQuery
+	err := _app.DB.DeleteBroadcast(bId)
+	if err != nil {
+		c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to delete log ❌", ShowAlert: true})
+		return nil
+	}
+
+	c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Broadcast Log Deleted ✅"})
+	return ListBroadcastHistory(bot, ctx)
 }

@@ -12,7 +12,9 @@ type SearchStat struct {
 type AnalyticsResult struct {
 	TotalUsers    int64
 	NewUsersToday int64
-	ActiveUsers   int64 // Last 24h
+	ActiveUsers        int64 // Last 24h
+	ActiveUsersWeekly  int64
+	ActiveUsersMonthly int64
 	TopSearches   []SearchStat
 	Languages     map[string]int64
 	Countries     map[string]int64

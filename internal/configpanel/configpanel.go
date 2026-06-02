@@ -39,6 +39,10 @@ func CreatePanel(app AppPreview) *panel.Panel {
 
 	p.NewPage("fsub", "Force Sub").WithCallbackFunc(ChannelField(app, config.FieldNameFsub, ChannelFieldOpts{Description: "Force Subcribe Channels are Channels that the User Must Join to get Files.", AllowRequestInvite: true}))
 
+	p.NewPage("moniterd", "Monitored Chans").WithCallbackFunc(MonitoredChannelsField(app))
+
+	p.AddPage(panel.NewPage("reschan", "Results Channel").WithCallbackFunc(ResultsChannelField(app)))
+
 	dbPage := panel.NewPage("db", "Database").WithContent("📂 Configure Database Settings from the Options Below.")
 	dbPage.NewSubPage("coll", "File Database").WithCallbackFunc(IntField(app, config.FieldNameCollectionIndex, IntFieldOpts{
 		Range:       &IntRange{Start: 0, End: app.GetAdditionalCollectionCount()},
@@ -58,6 +62,7 @@ func CreatePanel(app AppPreview) *panel.Panel {
 	resBtnPage.NewSubPage("url", "Button URL").WithCallbackFunc(StringField(app, config.FieldNameResultButtonUrl, StringFieldOpts{Description: "URL the button should open (e.g., your channel link)."}))
 
 	footerPage := p.NewPage("footer", "Footer Buttons")
+	footerPage.NewSubPage("releases", "Latest Releases URL").WithCallbackFunc(StringField(app, config.FieldNameLatestReleasesUrl, StringFieldOpts{Description: "URL for the 'Latest Releases' banner above search results."}))
 	footerPage.NewSubPage("movies", "New Movies URL").WithCallbackFunc(StringField(app, config.FieldNameNewMoviesUrl, StringFieldOpts{Description: "URL for the 'New Movies' button in search results."}))
 	footerPage.NewSubPage("updates", "Updates URL").WithCallbackFunc(StringField(app, config.FieldNameUpdatesUrl, StringFieldOpts{Description: "URL for the 'Updates' button in search results."}))
 

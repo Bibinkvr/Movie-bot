@@ -1,12 +1,11 @@
 package core
 
 import (
+	"fmt"
 	"strconv"
 
-	"autofilterbot/internal/fsub"
 	"autofilterbot/internal/autofilter"
 	"autofilterbot/pkg/callbackdata"
-	"slices"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"go.uber.org/zap"
@@ -14,13 +13,11 @@ import (
 
 // Navigate handles the navg callback query from autofilter results for pagination.
 func Navigate(bot *gotgbot.Bot, ctx *ext.Context) error {
-	isPrivate := ctx.EffectiveChat.Type == "private"
-	if isPrivate {
-		ok, _ := fsub.CheckFsub(_app, bot, ctx)
-		if !ok {
-			return nil
-		}
+	var isPrivate bool
+	if ctx.EffectiveChat != nil {
+		isPrivate = ctx.EffectiveChat.Type == "private"
 	}
+
 	c := ctx.CallbackQuery
 
 	data := callbackdata.FromString(c.Data)
@@ -62,43 +59,109 @@ func Navigate(bot *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	pageFiles := files[pageIndex]
+	var chatId int64
+	if c.Message != nil {
+		chatId = c.Message.GetChat().Id
+	}
 
 	var (
-		buttons   = make([][]gotgbot.InlineKeyboardButton, 0, len(pageFiles)+2)
-		chatId    = c.Message.GetChat().Id
+		buttons  = make([][]gotgbot.InlineKeyboardButton, 0, len(pageFiles)+10)
+		allFiles []autofilter.File
 	)
-	if isPrivate {
-		isSeries := autofilter.DetectType(pageFiles) == "series"
-		buttons = append(buttons, headerRow(r.UniqueId, pageIndex, isSeries))
+	for _, page := range r.Files {
+		allFiles = append(allFiles, page...)
 	}
 
-	fileButtons := pageFiles.Process(chatId, bot.Username, _app.Config)
+	searchType := autofilter.DetectType(allFiles)
+	isSeries := searchType == "series"
 
-	// Add Custom Button in the middle (after 5 rows or at the end)
-	if _app.Config.ResultButtonText != "" && _app.Config.ResultButtonUrl != "" {
-		splitPoint := 5
-		if len(fileButtons) < splitPoint {
-			splitPoint = len(fileButtons)
+	if isSeries {
+		// Season row
+		seasonButtons := autofilter.Files(allFiles).ProcessSeasons(r.UniqueId)
+		// Set first season button to success style (Green) as per image
+		if len(seasonButtons) > 0 && len(seasonButtons[0]) > 0 {
+			seasonButtons[0][0].Style = "success"
 		}
+		buttons = append(buttons, seasonButtons...)
 
-		customBtn := []gotgbot.InlineKeyboardButton{{
-			Text: _app.Config.ResultButtonText,
-			Url:  _app.Config.ResultButtonUrl,
-		}}
-
-		fileButtons = slices.Insert(fileButtons, splitPoint, customBtn)
+		// Language row
+		languages := autofilter.DetectLanguages(allFiles)
+		if len(languages) > 0 {
+			var langRow []gotgbot.InlineKeyboardButton
+			for _, l := range languages {
+				langRow = append(langRow, gotgbot.InlineKeyboardButton{
+					Text:         l,
+					CallbackData: fmt.Sprintf("lang|%s_%s", r.UniqueId, l),
+					Style:        "primary",
+				})
+				if len(langRow) == 2 {
+					buttons = append(buttons, langRow)
+					langRow = nil
+				}
+			}
+			if len(langRow) > 0 {
+				buttons = append(buttons, langRow)
+			}
+		}
 	}
 
+	// Divider
+	latestReleasesBtn := gotgbot.InlineKeyboardButton{Text: "🌟 Latest Releases 🌟", CallbackData: "ignore", Style: "success"}
+	if _app.Config.LatestReleasesUrl != "" {
+		latestReleasesBtn.Url = _app.Config.LatestReleasesUrl
+		latestReleasesBtn.CallbackData = ""
+	}
+	buttons = append(buttons, []gotgbot.InlineKeyboardButton{latestReleasesBtn})
+
+	// Add file buttons
+	fileButtons := pageFiles.Process(chatId, bot.Username, _app.Config)
 	buttons = append(buttons, fileButtons...)
+
+	// Multi-select
+	if isPrivate {
+		buttons = append(buttons, []gotgbot.InlineKeyboardButton{{Text: "✅ Select Multiple Files", CallbackData: fmt.Sprintf("sel|%s_%d", r.UniqueId, pageIndex), Style: "primary"}})
+	}
+
+	// Footer Action Row 1
+	newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "ignore"}
+	if _app.Config.NewMoviesUrl != "" {
+		newMoviesBtn.Url = _app.Config.NewMoviesUrl
+		newMoviesBtn.CallbackData = ""
+	}
+	updatesBtn := gotgbot.InlineKeyboardButton{Text: "📺 Updates", Style: "success", CallbackData: "ignore"}
+	if _app.Config.UpdatesUrl != "" {
+		updatesBtn.Url = _app.Config.UpdatesUrl
+		updatesBtn.CallbackData = ""
+	}
+	buttons = append(buttons, []gotgbot.InlineKeyboardButton{newMoviesBtn, updatesBtn})
+
+	// Navigation
 	buttons = append(buttons, footerRow(r.UniqueId, pageIndex, len(files)))
 
-	_, _, err = c.Message.EditReplyMarkup(bot, &gotgbot.EditMessageReplyMarkupOpts{
-		ChatId:    chatId,
-		MessageId: c.Message.GetMessageId(),
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-			InlineKeyboard: buttons,
-		},
+	// Footer Action Row 2
+	query := r.Query
+	buttons = append(buttons, []gotgbot.InlineKeyboardButton{
+		{Text: "📢 Share", SwitchInlineQuery: &query, Style: "success"},
+		{Text: "❌ Close", CallbackData: "close", Style: "danger"},
+		{Text: "♻️ Reset", CallbackData: "reset|" + query, Style: "primary"},
 	})
+
+	if c.InlineMessageId != "" {
+		_, _, err = bot.EditMessageReplyMarkup(&gotgbot.EditMessageReplyMarkupOpts{
+			InlineMessageId: c.InlineMessageId,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: buttons,
+			},
+		})
+	} else if c.Message != nil {
+		_, _, err = c.Message.EditReplyMarkup(bot, &gotgbot.EditMessageReplyMarkupOpts{
+			ChatId:      chatId,
+			MessageId:   c.Message.GetMessageId(),
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: buttons,
+			},
+		})
+	}
 	if err != nil {
 		_app.Log.Warn("navg: edit markup failed", zap.Error(err), zap.String("unique_id", r.UniqueId))
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"autofilterbot/internal/autofilter"
 	"autofilterbot/internal/fsub"
 	"autofilterbot/internal/functions"
 	"autofilterbot/internal/model"
@@ -20,7 +21,7 @@ import (
 
 // All handles the callback from the "all" button in autofilter results.
 func All(bot *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type != "private" {
+	if ctx.EffectiveChat == nil || ctx.EffectiveChat.Type != "private" {
 		ctx.CallbackQuery.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Please use this in Private Chat Only!", ShowAlert: true})
 		return nil
 	}
@@ -93,7 +94,7 @@ func All(bot *gotgbot.Bot, ctx *ext.Context) error {
 		msg, err := f.Send(bot, c.From.Id, &model.SendFileOpts{
 			Caption: _app.FormatText(ctx, _app.Config.GetFileCaption(), map[string]any{
 				"file_size": functions.FileSizeToString(f.FileSize),
-				"file_name": f.FileName,
+				"file_name": autofilter.CleanFileNameForDisplay(f.FileName),
 				"warn":      warn,
 			}),
 			Keyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "🗑️ ᴅᴇʟᴇᴛᴇ ғɪʟᴇ 🗑️", CallbackData: "close"}}},
@@ -101,13 +102,18 @@ func All(bot *gotgbot.Bot, ctx *ext.Context) error {
 		if err != nil {
 			if functions.IsChatNotFoundErr(err) { // user has not started bot or blocked
 				// redirect to dm for a retry msg
+				var msgChatId, msgId int64
+				if c.Message != nil {
+					msgChatId = c.Message.GetChat().Id
+					msgId = c.Message.GetMessageId()
+				}
 				data := &RetryData{ //TODO: implement
-					ChatId:    c.Message.GetChat().Id,
-					MessageId: c.Message.GetMessageId(),
+					ChatId:    msgChatId,
+					MessageId: msgId,
 				}
 
 				_, err = c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{
-					Url: fmt.Sprintf("t.me/%s?start=%s", bot.Username, data.Encode()),
+					Url: fmt.Sprintf("https://t.me/%s?start=%s", bot.Username, data.Encode()),
 				})
 				if err != nil {
 					_app.Log.Warn("all: retry answer failed", zap.Error(err))
@@ -216,24 +222,33 @@ func ResumeUserAction(bot *gotgbot.Bot, ctx *ext.Context, userId int64) error {
 	}
 
 	if action == "" {
-		ctx.Update.Message = &gotgbot.Message{
+		msg := &gotgbot.Message{
 			From: &gotgbot.User{Id: userId},
 			Chat: gotgbot.Chat{Id: userId, Type: "private"},
 		}
-		ctx.Message = ctx.Update.Message
+		ctx.Update.Message = msg
+		ctx.Message = msg
+		ctx.EffectiveMessage = msg
+		ctx.EffectiveChat = &msg.Chat
+		ctx.EffectiveUser = msg.From
 		return StaticCommands(bot, ctx)
 	}
 
 	if strings.HasPrefix(action, "cb:") {
 		originalData := strings.TrimPrefix(action, "cb:")
-		ctx.Update.CallbackQuery = &gotgbot.CallbackQuery{
-			Data: originalData,
-			From: gotgbot.User{Id: userId},
-			Message: &gotgbot.Message{
-				Chat: gotgbot.Chat{Id: userId, Type: "private"},
-			},
+		msg := &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userId, Type: "private"},
 		}
-		ctx.CallbackQuery = ctx.Update.CallbackQuery
+		cb := &gotgbot.CallbackQuery{
+			Data:    originalData,
+			From:    gotgbot.User{Id: userId},
+			Message: msg,
+		}
+		ctx.Update.CallbackQuery = cb
+		ctx.CallbackQuery = cb
+		ctx.EffectiveMessage = msg
+		ctx.EffectiveChat = &msg.Chat
+		ctx.EffectiveUser = &cb.From
 
 		prefix, _, _ := strings.Cut(originalData, "|")
 		switch prefix {
@@ -241,24 +256,50 @@ func ResumeUserAction(bot *gotgbot.Bot, ctx *ext.Context, userId int64) error {
 			return All(bot, ctx)
 		case "sel":
 			return Select(bot, ctx)
+		case "sendsel":
+			return SendSelected(bot, ctx)
 		case "navg":
 			return Navigate(bot, ctx)
+		case "sendfile":
+			return SendFileCallback(bot, ctx)
+		case "sn":
+			return SeasonCallback(bot, ctx)
+		case "lang":
+			return LanguageCallback(bot, ctx)
+		case "af":
+			return SeasonListCallback(bot, ctx)
+		case "suggest", "reset", "trend":
+			return Autofilter(bot, ctx)
+		case "cmd":
+			return StaticCommands(bot, ctx)
+		case "close":
+			return Close(bot, ctx)
+		case "fdetails":
+			return FileDetails(bot, ctx)
 		}
 	} else if strings.HasPrefix(action, "/") {
-		ctx.Update.Message = &gotgbot.Message{
+		msg := &gotgbot.Message{
 			Text: action,
 			From: &gotgbot.User{Id: userId},
 			Chat: gotgbot.Chat{Id: userId, Type: "private"},
 		}
-		ctx.Message = ctx.Update.Message
+		ctx.Update.Message = msg
+		ctx.Message = msg
+		ctx.EffectiveMessage = msg
+		ctx.EffectiveChat = &msg.Chat
+		ctx.EffectiveUser = msg.From
 		return StartCommand(bot, ctx)
 	} else {
-		ctx.Update.Message = &gotgbot.Message{
+		msg := &gotgbot.Message{
 			Text: action,
 			From: &gotgbot.User{Id: userId},
 			Chat: gotgbot.Chat{Id: userId, Type: "private"},
 		}
-		ctx.Message = ctx.Update.Message
+		ctx.Update.Message = msg
+		ctx.Message = msg
+		ctx.EffectiveMessage = msg
+		ctx.EffectiveChat = &msg.Chat
+		ctx.EffectiveUser = msg.From
 		return Autofilter(bot, ctx)
 	}
 

@@ -12,6 +12,8 @@ type SearchResult struct {
 	ChatID int64 `json:"chat_id,omitempty"`
 	// Files are the files fetched from the database.
 	Files []Files `json:"files,omitempty"`
+	// IsPhoto indicates whether the search result was sent as a photo/poster.
+	IsPhoto bool `json:"is_photo,omitempty"`
 }
 
 // SelectFile sets the IsSelected field of the file on given page.

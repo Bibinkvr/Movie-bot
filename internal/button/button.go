@@ -12,6 +12,7 @@ type InlineKeyboardButton struct {
 	SwitchInlineQueryCurrentChat string `json:"switch_inline_query_current_chat,omitempty" bson:"switch_inline_query_current_chat,omitempty"`
 	CopyText                     string `json:"copy_text,omitempty" bson:"copy_text,omitempty"`
 	Style                        string `json:"style,omitempty" bson:"style,omitempty"`
+	IconCustomEmojiId            string `json:"icon_custom_emoji_id,omitempty" bson:"icon_custom_emoji_id,omitempty"`
 }
 
 func NewInlineKeyboardButton(val gotgbot.InlineKeyboardButton) InlineKeyboardButton {
@@ -30,6 +31,7 @@ func NewInlineKeyboardButton(val gotgbot.InlineKeyboardButton) InlineKeyboardBut
 		b.CopyText = val.CopyText.Text
 	}
 	b.Style = val.Style
+	b.IconCustomEmojiId = val.IconCustomEmojiId
 
 	return b
 }
@@ -51,6 +53,7 @@ func (val InlineKeyboardButton) Unwrap() gotgbot.InlineKeyboardButton {
 		b.CopyText = &gotgbot.CopyTextButton{Text: val.CopyText}
 	}
 	b.Style = val.Style
+	b.IconCustomEmojiId = val.IconCustomEmojiId
 
 	return b
 }

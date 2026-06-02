@@ -1,9 +1,9 @@
 package config
 
 const (
-	defaultMaxResults = 50
+	defaultMaxResults = 300
 	defaultMaxPerPage = 10
-	defaultMaxPages   = 5
+	defaultMaxPages   = 30
 )
 
 func (c *Config) GetMaxResults() int {
@@ -23,8 +23,8 @@ func (c *Config) GetMaxPerPage() int {
 }
 
 func (c *Config) GetMaxPages() int {
-	if c.MaxResults != 0 {
-		return c.MaxResults
+	if c.MaxPages != 0 {
+		return c.MaxPages
 	}
 
 	return defaultMaxPages

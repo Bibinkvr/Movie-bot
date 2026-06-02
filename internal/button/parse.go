@@ -50,8 +50,29 @@ func ParseFromText(text string) (returnText string, buttons [][]InlineKeyboardBu
 			var (
 				newButton = InlineKeyboardButton{Text: m[1]}
 				btnType   = m[2]
-				val       = m[3]
+				rawVal    = m[3]
 			)
+
+			parts := strings.Split(rawVal, "|")
+			val := strings.TrimSpace(parts[0])
+
+			for _, opt := range parts[1:] {
+				optParts := strings.SplitN(opt, ":", 2)
+				if len(optParts) == 2 {
+					key := strings.TrimSpace(optParts[0])
+					value := strings.TrimSpace(optParts[1])
+					switch key {
+					case "style":
+						newButton.Style = value
+					case "emoji":
+						if isNumeric(value) {
+							newButton.IconCustomEmojiId = value
+						} else {
+							newButton.Text = value + " " + newButton.Text
+						}
+					}
+				}
+			}
 
 			if val == "" && btnType != "inline" { // only inline can have empty value
 				allErrors = append(allErrors, fmt.Errorf("value is required for %s button", btnType))
@@ -84,4 +105,16 @@ func ParseFromText(text string) (returnText string, buttons [][]InlineKeyboardBu
 	returnText = strings.TrimSpace(returnText)
 
 	return returnText, buttons, errors.Join(allErrors...)
+}
+
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

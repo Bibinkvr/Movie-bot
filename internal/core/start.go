@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	DataPrefixFile  = 'f'
-	DataPrefixBatch = 'b'
-	DataPrefixRetry = 'r'
+	DataPrefixFile   = 'f'
+	DataPrefixBatch  = 'b'
+	DataPrefixRetry  = 'r'
+	DataPrefixSearch = 's'
 )
 
 // StartCommand handles the start command.
@@ -33,9 +34,16 @@ func StartCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 	if len(args) > 1 {
 		// Detect if it's a functional link or a referral tag
 		arg := args[1]
-		if bytes, err := base64.StdEncoding.DecodeString(arg); err == nil {
+		// Try RawURLEncoding first
+		bytes, err := base64.RawURLEncoding.DecodeString(arg)
+		// Fallback to StdEncoding
+		if err != nil {
+			bytes, err = base64.StdEncoding.DecodeString(arg)
+		}
+
+		if err == nil {
 			data := string(bytes)
-			if len(data) > 0 && (data[0] == DataPrefixFile || data[0] == DataPrefixBatch || data[0] == DataPrefixRetry) {
+			if len(data) > 0 && (data[0] == DataPrefixFile || data[0] == DataPrefixBatch || data[0] == DataPrefixRetry || data[0] == DataPrefixSearch) {
 				// Functional link, not a referral tag
 				source = "direct_file"
 			} else {
@@ -63,15 +71,15 @@ func StartCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 	}()
 
 	if len(args) < 2 {
-		ok, _ := fsub.CheckFsub(_app, bot, ctx)
-		if !ok {
-			return nil
-		}
 		return StaticCommands(bot, ctx)
 	}
 
 	// Any start data is expected to be base64 encoded
-	bytes, err := base64.StdEncoding.DecodeString(args[1])
+	bytes, err := base64.RawURLEncoding.DecodeString(args[1])
+	if err != nil {
+		bytes, err = base64.StdEncoding.DecodeString(args[1])
+	}
+
 	if err != nil {
 		// If decoding fails, it might just be a referral source, not a file link
 		_app.Log.Debug("start: decode data failed (might be a referral source)", zap.Error(err))
@@ -107,6 +115,20 @@ func StartCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 			return nil
 		}
 
+		// Fetch and send poster if available
+		isSeries := autofilter.IsSeriesFile(f.FileName)
+		posterUrl := autofilter.GetPosterUrlWithType(f.FileName, isSeries)
+		if posterUrl != "" {
+			limiter.Wait()
+			_, err = bot.SendPhoto(m.Chat.Id, gotgbot.InputFileByURL(posterUrl), &gotgbot.SendPhotoOpts{
+				Caption: fmt.Sprintf("<b>🎬 Poster for: %s</b>", autofilter.CleanFileNameForDisplay(f.FileName)),
+				ParseMode: gotgbot.ParseModeHTML,
+			})
+			if err != nil {
+				_app.Log.Warn("start: send poster failed", zap.Error(err))
+			}
+		}
+
 		var (
 			warn    string
 			delTime = _app.Config.GetFileAutoDelete()
@@ -118,10 +140,11 @@ func StartCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 		msg, err := f.Send(bot, m.Chat.Id, &model.SendFileOpts{
 			Caption: _app.FormatText(ctx, _app.Config.GetFileCaption(), map[string]any{
 				"file_size": functions.FileSizeToString(f.FileSize),
-				"file_name": f.FileName,
+				"file_name": autofilter.CleanFileNameForDisplay(f.FileName),
 				"warn":      warn,
 			}),
-			Keyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "🗑️ ᴅᴇʟᴇᴛᴇ ғɪʟᴇ 🗑️", CallbackData: "close"}}},
+			Keyboard:        [][]gotgbot.InlineKeyboardButton{{{Text: "🗑️ ᴅᴇʟᴇᴛᴇ ғɪʟᴇ 🗑️", CallbackData: "close"}}},
+			MessageEffectId: "5046509860340391262", // Confetti Effect
 		})
 		if err != nil {
 			_app.Log.Warn("start: send file failed", zap.Error(err), zap.String("file_id", f.FileId))
@@ -173,6 +196,9 @@ func StartCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 		if pm != nil {
 			pm.Delete(bot, nil)
 		}
+	case DataPrefixSearch:
+		_, err := _autofilter(bot, ctx)
+		return err
 	default:
 		// Unknown prefix, treat as referral start
 		return StaticCommands(bot, ctx)

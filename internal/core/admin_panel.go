@@ -18,18 +18,20 @@ func AdminPanel(bot *gotgbot.Bot, ctx *ext.Context) error {
 	text := "<b>🛠️ ADMIN PANEL</b>\n\n<i>Select a category below to manage the bot:</i>"
 	markup := gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-			// Row 1: Overview
-			{{Text: "Stats", CallbackData: "admin:stats"}, {Text: "Users", CallbackData: "admin:users"}},
-			// Row 2: Messaging
-			{{Text: "Broadcast", CallbackData: "admin:broadcast"}},
-			// Row 3: File Management
-			{{Text: "Index", CallbackData: "admin:index"}, {Text: "Batch", CallbackData: "admin:batch"}, {Text: "GenLink", CallbackData: "admin:genlink"}},
-			// Row 4: Delete Controls
-			{{Text: "Delete", CallbackData: "admin:delete"}, {Text: "Delete All", CallbackData: "admin:deleteall"}, {Text: "Clean Quality", CallbackData: "admin:clean"}},
-			// Row 5: Configuration
-			{{Text: "Settings", CallbackData: "admin:settings"}},
-			// Row 6: Navigation
-			{{Text: "Close", CallbackData: "admin:close"}},
+			// Row 1: Stats & Overview
+			{{Text: "Stats 📊", CallbackData: "admin:stats"}, {Text: "Users 👥", CallbackData: "admin:users"}, {Text: "FSub Stats 📈", CallbackData: "admin:fstats"}},
+			// Row 2: Messages & Advertising
+			{{Text: "Broadcast 📢", CallbackData: "admin:broadcast"}, {Text: "History 📂", CallbackData: "admin:bchistory"}, {Text: "Create Post 📮", CallbackData: "admin:post"}},
+			// Row 3: File Syncing & Indexing
+			{{Text: "Index 🗂️", CallbackData: "admin:index"}, {Text: "Batch 📦", CallbackData: "admin:batch"}, {Text: "GenLink 🔗", CallbackData: "admin:genlink"}},
+			// Row 4: Delete Operations
+			{{Text: "Delete 🗑️", CallbackData: "admin:delete"}, {Text: "Delete All 🚯", CallbackData: "admin:deleteall"}, {Text: "Clean Quality 🧹", CallbackData: "admin:clean"}},
+			// Row 5: Force Subscribe & Index offsets
+			{{Text: "FSub Config 📢", CallbackData: "admin:fsub"}, {Text: "Set Skip ⏭️", CallbackData: "admin:setskip"}},
+			// Row 6: Configuration & Diagnostics
+			{{Text: "Settings ⚙️", CallbackData: "admin:settings"}, {Text: "Logs 📄", CallbackData: "admin:logs"}},
+			// Row 7: Close
+			{{Text: "Close ❌", CallbackData: "admin:close"}},
 		},
 	}
 
@@ -63,8 +65,26 @@ func AdminCallbackHandler(bot *gotgbot.Bot, ctx *ext.Context) error {
 	data := c.Data
 	action := strings.TrimPrefix(data, "admin:")
 
-	// Answer callback to remove loading state
-	c.Answer(bot, nil)
+	// Answer callback to remove loading state for standard actions
+	if !strings.HasPrefix(action, "bc_") && !strings.HasPrefix(action, "bchist_") {
+		c.Answer(bot, nil)
+	}
+
+	// Handle prefix actions
+	switch {
+	case action == "bchistory":
+		return ListBroadcastHistory(bot, ctx)
+	case strings.HasPrefix(action, "bchist_view:"):
+		return ViewBroadcastDetails(bot, ctx, strings.TrimPrefix(action, "bchist_view:"))
+	case strings.HasPrefix(action, "bchist_delmsg:"):
+		return HandleDeleteBroadcastMessages(bot, ctx, strings.TrimPrefix(action, "bchist_delmsg:"))
+	case strings.HasPrefix(action, "bchist_delrec:"):
+		return HandleDeleteBroadcastRecord(bot, ctx, strings.TrimPrefix(action, "bchist_delrec:"))
+	case strings.HasPrefix(action, "bc_send:"):
+		return HandleConfirmBroadcast(bot, ctx, strings.TrimPrefix(action, "bc_send:"))
+	case strings.HasPrefix(action, "bc_cancel:"):
+		return HandleCancelBroadcast(bot, ctx, strings.TrimPrefix(action, "bc_cancel:"))
+	}
 
 	switch action {
 	case "back":
@@ -76,6 +96,8 @@ func AdminCallbackHandler(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	case "stats", "users":
 		return Stats(bot, ctx)
+	case "fstats":
+		return FStats(bot, ctx)
 	case "broadcast":
 		return Broadcast(bot, ctx)
 	case "index":
@@ -90,8 +112,16 @@ func AdminCallbackHandler(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return DeleteAllFiles(bot, ctx)
 	case "clean":
 		return CleanQuality(bot, ctx)
+	case "fsub":
+		return SetFsub(bot, ctx)
+	case "setskip":
+		return SetSkip(bot, ctx)
 	case "settings":
 		return Settings(bot, ctx)
+	case "logs":
+		return Logs(bot, ctx)
+	case "post":
+		return PostCommand(bot, ctx)
 	case "close":
 		return Close(bot, ctx)
 	default:

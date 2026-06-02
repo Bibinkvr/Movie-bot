@@ -13,6 +13,8 @@ const (
 	CollectionNameOperations   = "Operations"
 	CollectionNameGroups       = "Groups"
 	CollectionNameJoinRequests = "JoinRequests"
+	CollectionNameJoinRequestsLogs = "JoinRequestsLogs"
+	CollectionNameBroadcasts   = "Broadcasts"
 
 	DefaultDatabaseName = "AutoFilterBot"
 )
@@ -52,7 +54,7 @@ type Database interface {
 	// UpdateUserLastSeen updates the last search time for a user.
 	UpdateUserLastSeen(userId int64) error
 	// GetUserAnalytics returns aggregated user statistics.
-	GetUserAnalytics() (total, newToday, active24h int64, countries map[string]int64, err error)
+	GetUserAnalytics() (total, newToday, active24h, activeWeekly, activeMonthly int64, countries map[string]int64, err error)
 
 	// SaveFile saves a file to the database and returns a FileAlreadyExistsError if the file already exists.
 	// The file can be a duplicate if it has the same file_id or file_name-file_size combination.
@@ -95,6 +97,15 @@ type Database interface {
 	GetActiveIndexOperations() ([]*model.Index, error)
 	// DeleteOperation deletes an active operation by id.
 	DeleteOperation(pid string) error
+	// GetSpellingSuggestions queries local DB files for fuzzy matching suggestions.
+	GetSpellingSuggestions(query string) ([]string, error)
+
+	// Broadcasts
+	SaveBroadcast(b *model.Broadcast) error
+	GetBroadcast(id string) (*model.Broadcast, error)
+	UpdateBroadcast(id string, updates map[string]interface{}) error
+	GetAllBroadcasts() ([]model.Broadcast, error)
+	DeleteBroadcast(id string) error
 }
 
 // KeyValuePair represents a single key-value pair in a document.

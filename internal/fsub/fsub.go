@@ -41,11 +41,15 @@ func GetMissingChannels(bot *gotgbot.Bot, db *mongo.Client, userId int64, channe
 		member, err := bot.GetChatMember(ch.ID, userId, nil)
 		isMember := false
 		if err == nil {
-			switch m := member.(type) {
-			case gotgbot.ChatMemberOwner, gotgbot.ChatMemberAdministrator, gotgbot.ChatMemberMember:
+			status := member.GetStatus()
+			if status == "creator" || status == "administrator" || status == "member" {
 				isMember = true
-			case gotgbot.ChatMemberRestricted:
-				isMember = m.IsMember
+			} else if status == "restricted" {
+				if m, ok := member.(*gotgbot.ChatMemberRestricted); ok {
+					isMember = m.IsMember
+				} else if m, ok := member.(gotgbot.ChatMemberRestricted); ok {
+					isMember = m.IsMember
+				}
 			}
 		}
 
@@ -104,12 +108,9 @@ func CheckFsub(app appPreview, bot *gotgbot.Bot, ctx *ext.Context) (bool, error)
 		link = "https://t.me/telegram"
 	}
 	btns = append(btns, []gotgbot.InlineKeyboardButton{{Text: "ᴊᴏɪɴ " + ch.Title, Url: link}})
+	btns = append(btns, []gotgbot.InlineKeyboardButton{{Text: "ᴛʀʏ ᴀɢᴀɪɴ 🔄", CallbackData: "fsub_verify"}})
 
-	// "I Requested" button
-	joinedBtn := gotgbot.InlineKeyboardButton{Text: "✨ I Rᴇǫᴜᴇsᴛᴇᴅ ✨", CallbackData: "fsub_verify"}
-	btns = append(btns, []gotgbot.InlineKeyboardButton{joinedBtn})
-
-	text := fmt.Sprintf("<b>📛 Aᴄᴄᴇss Dᴇɴɪᴇᴅ 📛</b>\n\n<i>𝖠𝖼𝖼𝖾𝗌𝗌 𝖨𝗌 𝖱𝖾𝗌𝗍𝗋𝗂𝖼𝗍𝖾𝖽. 𝖯𝗅𝖾𝖺𝗌𝖾 𝖲𝖾𝗇𝖽 𝖠 <b>𝖩𝗈𝗂𝗇 𝖱𝖾𝗊𝗎𝖾𝗌𝗍</b> 𝖳𝗈 𝖳𝗁𝖾 𝖢𝗁𝖺𝗇𝗇𝖾𝗅 𝖡𝖾𝗅𝗈𝗐 𝖠𝗇𝖽 𝖢𝗅𝗂𝖼𝗄 𝖳𝗁𝖾 '𝖨 𝖱𝖾𝗊𝗎𝖾𝗌𝗍𝖾𝖽' 𝖡𝗎𝗍𝗍𝗈𝗇 𝖳𝗈 𝖢𝗈𝗇𝗍𝗂𝗇𝗎𝖾.</i>\n\n<b>Channel [%d/%d]</b>", len(channels)-len(missing)+1, len(channels))
+	text := fmt.Sprintf("<b>📛 Aᴄᴄᴇss Dᴇɴɪᴇᴅ 📛</b>\n\n<i>𝖠𝖼𝖼𝖾𝗌𝗌 𝖨𝗌 𝖱𝖾𝗌𝗍𝗋𝗂𝖼𝗍𝖾𝖽. 𝖯𝗅𝖾𝖺𝗌𝖾 𝖲𝖾𝗇𝖽 𝖠 <b>𝖩𝗈𝗂𝗇 𝖱𝖾𝗊𝗎𝖾𝗌𝗍</b> 𝖳𝗈 𝖳𝗁𝖾 𝖢𝗁𝖺𝗇𝗇𝖾𝗅 𝖡𝖾𝗅𝗈𝗐 𝖳𝗈 𝖢𝗈𝗇𝗍𝗂𝗇𝗎𝖾.</i>\n\n<b>Channel [%d/%d]</b>", len(channels)-len(missing)+1, len(channels))
 
 	// Private Chat Logic
 	if ctx.EffectiveChat != nil && ctx.EffectiveChat.Type == "private" {
@@ -149,34 +150,68 @@ func CheckFsub(app appPreview, bot *gotgbot.Bot, ctx *ext.Context) (bool, error)
 		return false, err
 	}
 
-	// Group Logic
-	if ctx.EffectiveChat != nil && (ctx.EffectiveChat.Type == "group" || ctx.EffectiveChat.Type == "supergroup") {
-		if !antiSpamCache.ShouldWarn(userId, 5*time.Minute) {
-			return false, nil // Silently ignore to avoid spam
+	// Non-private chat logic (group, supergroup, channel, or callback from outside private)
+	if ctx.EffectiveChat != nil && ctx.EffectiveChat.Type != "private" {
+		// Store last action so they can resume when they verify
+		action := ""
+		if ctx.CallbackQuery != nil {
+			action = "cb:" + ctx.CallbackQuery.Data
+		} else if ctx.Message != nil {
+			action = ctx.Message.Text
+		}
+		if action != "" {
+			app.GetDB().SetUserLastAction(userId, action)
 		}
 
-		groupText := fmt.Sprintf("<b>Hey %s, Please Join Our Channels To Use The Bot!</b>\n\n<i>I've Sent The Join Links To Your DMs.</i>", ctx.EffectiveUser.FirstName)
-		
 		// Attempt to DM the user
-		_, err := bot.SendMessage(userId, text, &gotgbot.SendMessageOpts{
+		msg, err := bot.SendMessage(userId, text, &gotgbot.SendMessageOpts{
 			ParseMode:   "HTML",
 			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: btns},
 		})
 
 		if err != nil {
-			// DM Failed, send group message with start button
-			groupText += "\n\n<b>⚠️ I Couldn't DM You. Please Start The Bot First!</b>"
-			startBtn := gotgbot.InlineKeyboardButton{Text: "🚀 Sᴛᴀʀᴛ Bᴏᴛ", Url: "https://t.me/" + bot.Username + "?start=fsub"}
-			_, _ = bot.SendMessage(ctx.EffectiveChat.Id, groupText, &gotgbot.SendMessageOpts{
-				ParseMode: "HTML",
-				ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{startBtn}}},
-			})
+			// DM failed (usually because they haven't started the bot in PM)
+			if ctx.CallbackQuery != nil {
+				// Show popup with redirect URL to PM
+				_, _ = ctx.CallbackQuery.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{
+					Text:      "⚠️ Please start the bot first in PM and join the channel!",
+					ShowAlert: true,
+					Url:       fmt.Sprintf("https://t.me/%s?start=fsub", bot.Username),
+				})
+			} else if ctx.Message != nil {
+				if antiSpamCache.ShouldWarn(userId, 5*time.Minute) {
+					groupText := fmt.Sprintf("<b>Hey %s, Please Join Our Channels To Use The Bot!</b>\n\n<i>⚠️ I Couldn't DM You. Please Start The Bot First!</i>", ctx.EffectiveUser.FirstName)
+					startBtn := gotgbot.InlineKeyboardButton{Text: "🚀 Sᴛᴀʀᴛ Bᴏᴛ", Url: "https://t.me/" + bot.Username + "?start=fsub"}
+					_, _ = bot.SendMessage(ctx.EffectiveChat.Id, groupText, &gotgbot.SendMessageOpts{
+						ParseMode: "HTML",
+						ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{startBtn}}},
+					})
+				}
+			}
 		} else {
-			// DM Succeeded, notify in group
-			_, _ = bot.SendMessage(ctx.EffectiveChat.Id, groupText, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			// DM Succeeded!
+			if msg != nil {
+				app.GetDB().SetUserFsubMessage(userId, msg.MessageId)
+			}
+			if ctx.CallbackQuery != nil {
+				_, _ = ctx.CallbackQuery.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{
+					Text:      "📩 I have sent the Join Requests / links to your PM! Please join/request and click this file button again.",
+					ShowAlert: true,
+				})
+			} else if ctx.Message != nil {
+				if antiSpamCache.ShouldWarn(userId, 5*time.Minute) {
+					groupText := fmt.Sprintf("<b>Hey %s, Please Join Our Channels To Use The Bot!</b>\n\n<i>I've Sent The Join Links To Your DMs.</i>", ctx.EffectiveUser.FirstName)
+					_, _ = bot.SendMessage(ctx.EffectiveChat.Id, groupText, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+				}
+			}
 		}
 		return false, nil
 	}
 
 	return false, nil
+}
+
+// SetMembershipCache sets the cached membership status for a user and channel.
+func SetMembershipCache(userId, channelId int64, isMember bool) {
+	membershipCache.Set(userId, channelId, isMember, 60*time.Second)
 }

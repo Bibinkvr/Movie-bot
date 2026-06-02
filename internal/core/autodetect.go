@@ -126,6 +126,9 @@ func PromptIndex(bot *gotgbot.Bot, ctx *ext.Context, channelID, messageID int64)
 		return nil
 	}
 
+	// Automatically save index channel to monitored channels
+	_ = _app.AddFileChannel(channelID)
+
 	keyboard := [][]gotgbot.InlineKeyboardButton{{
 		indexModel.CancelButton(), 
 		indexModel.ModifyButton(), 

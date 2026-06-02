@@ -21,7 +21,15 @@ func Close(bot *gotgbot.Bot, ctx *ext.Context) error {
 
 	data := callbackdata.FromString(c.Data)
 	if len(data.Args) == 0 { // no authorized users, anyone can use
-		c.Message.Delete(bot, nil)
+		if c.Message != nil {
+			c.Message.Delete(bot, nil)
+		} else if c.InlineMessageId != "" {
+			_, _, _ = bot.EditMessageReplyMarkup(&gotgbot.EditMessageReplyMarkupOpts{
+				InlineMessageId: c.InlineMessageId,
+				ReplyMarkup:     gotgbot.InlineKeyboardMarkup{},
+			})
+			c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Closed! ❌"})
+		}
 		return nil
 	}
 
@@ -34,7 +42,14 @@ func Close(bot *gotgbot.Bot, ctx *ext.Context) error {
 
 		if id == c.From.Id {
 			c.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Message Has Been Deleted 🗑️"})
-			c.Message.Delete(bot, nil)
+			if c.Message != nil {
+				c.Message.Delete(bot, nil)
+			} else if c.InlineMessageId != "" {
+				_, _, _ = bot.EditMessageReplyMarkup(&gotgbot.EditMessageReplyMarkupOpts{
+					InlineMessageId: c.InlineMessageId,
+					ReplyMarkup:     gotgbot.InlineKeyboardMarkup{},
+				})
+			}
 			return nil
 		}
 	}
