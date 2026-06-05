@@ -623,6 +623,15 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
 			ParseMode:   gotgbot.ParseModeHTML,
 		})
+		if sendErr != nil {
+			_app.Log.Warn("autofilter: send photo failed, falling back to text message", zap.Error(sendErr))
+			posterUrl = "" // clear so redirect links or downstream know it's text
+			msg, sendErr = bot.SendMessage(sendChatID, text, &gotgbot.SendMessageOpts{
+				ReplyParameters: replyParams,
+				ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
+				ParseMode:   gotgbot.ParseModeHTML,
+			})
+		}
 	} else {
 		msg, sendErr = bot.SendMessage(sendChatID, text, &gotgbot.SendMessageOpts{
 			ReplyParameters: replyParams,
@@ -647,6 +656,14 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 					ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
 					ParseMode:   gotgbot.ParseModeHTML,
 				})
+				if err != nil {
+					_app.Log.Warn("autofilter: fallback send photo failed, trying fallback text message", zap.Error(err))
+					msg, err = bot.SendMessage(inputMessage.GetChat().Id, text, &gotgbot.SendMessageOpts{
+						ReplyParameters: replyParamsFallback,
+						ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: buttons},
+						ParseMode:   gotgbot.ParseModeHTML,
+					})
+				}
 			} else {
 				msg, err = bot.SendMessage(inputMessage.GetChat().Id, text, &gotgbot.SendMessageOpts{
 					ReplyParameters: replyParamsFallback,
