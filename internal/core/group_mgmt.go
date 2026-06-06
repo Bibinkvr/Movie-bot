@@ -25,6 +25,15 @@ func ptrBool(b bool) *bool {
 	return &b
 }
 
+// Helper to get arguments excluding the command itself
+func getCommandArgs(ctx *ext.Context) []string {
+	args := ctx.Args()
+	if len(args) > 0 {
+		return args[1:]
+	}
+	return []string{}
+}
+
 func getCustomTitle(member gotgbot.ChatMember) string {
 	switch m := member.(type) {
 	case *gotgbot.ChatMemberAdministrator:
@@ -98,7 +107,7 @@ func parseTargetUser(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.User, string,
 	if m.ReplyToMessage != nil {
 		return m.ReplyToMessage.From, "", nil
 	}
-	args := ctx.Args()
+	args := getCommandArgs(ctx)
 	if len(args) == 0 {
 		return nil, "Please reply to a user or specify a user ID/username.", nil
 	}
@@ -418,7 +427,7 @@ func WarnUser(bot *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	reason := "No reason specified."
-	args := ctx.Args()
+	args := getCommandArgs(ctx)
 	if len(args) > 0 {
 		if m.ReplyToMessage != nil {
 			reason = strings.Join(args, " ")
@@ -1092,7 +1101,7 @@ func LockCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	args := ctx.Args()
+	args := getCommandArgs(ctx)
 	if len(args) == 0 {
 		_, _ = m.Reply(bot, "Please specify a lock type. Available locks: <code>stickers</code>, <code>gifs</code>, <code>media</code>, <code>forwards</code>, <code>links</code>.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 		return nil
@@ -1135,7 +1144,7 @@ func UnlockCommand(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	args := ctx.Args()
+	args := getCommandArgs(ctx)
 	if len(args) == 0 {
 		_, _ = m.Reply(bot, "Please specify a lock type to unlock. Available locks: <code>stickers</code>, <code>gifs</code>, <code>media</code>, <code>forwards</code>, <code>links</code>.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 		return nil
@@ -1255,7 +1264,7 @@ func SetAdminTitle(bot *gotgbot.Bot, ctx *ext.Context) error {
 		_, _ = m.Reply(bot, errMsg, nil)
 		return nil
 	}
-	args := ctx.Args()
+	args := getCommandArgs(ctx)
 	title := ""
 	if m.ReplyToMessage != nil && len(args) > 0 {
 		title = strings.Join(args, " ")
@@ -1358,7 +1367,7 @@ func BanUserVariant(bot *gotgbot.Bot, ctx *ext.Context, silent bool, deleteRepli
 	var untilDate int64
 	durationText := ""
 	if temp {
-		args := ctx.Args()
+		args := getCommandArgs(ctx)
 		var timeArg string
 		if m.ReplyToMessage != nil && len(args) > 0 {
 			timeArg = args[0]
@@ -1442,7 +1451,7 @@ func MuteUserVariant(bot *gotgbot.Bot, ctx *ext.Context, silent bool, deleteRepl
 	var untilDate int64
 	durationText := ""
 	if temp {
-		args := ctx.Args()
+		args := getCommandArgs(ctx)
 		var timeArg string
 		if m.ReplyToMessage != nil && len(args) > 0 {
 			timeArg = args[0]
@@ -1666,7 +1675,7 @@ func WarnUserVariant(bot *gotgbot.Bot, ctx *ext.Context, silent bool, deleteRepl
 	}
 
 	reason := "No reason specified."
-	args := ctx.Args()
+	args := getCommandArgs(ctx)
 	if m.ReplyToMessage != nil && len(args) > 0 {
 		reason = strings.Join(args, " ")
 	} else if len(args) > 1 {
@@ -1694,7 +1703,7 @@ func SetWarnLimit(bot *gotgbot.Bot, ctx *ext.Context) error {
 	if !ok {
 		return nil
 	}
-	args := ctx.Args()
+	args := getCommandArgs(ctx)
 	if len(args) == 0 {
 		_, _ = m.Reply(bot, "Please specify warning limit. Example: <code>/setwarnlimit 5</code>", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 		return nil
@@ -1725,7 +1734,7 @@ func SetWarnMode(bot *gotgbot.Bot, ctx *ext.Context) error {
 	if !ok {
 		return nil
 	}
-	args := ctx.Args()
+	args := getCommandArgs(ctx)
 	if len(args) == 0 {
 		_, _ = m.Reply(bot, "Please specify warn action mode: <code>ban</code>, <code>kick</code>, or <code>mute</code>.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 		return nil
@@ -1830,7 +1839,7 @@ func SetFloodLimit(bot *gotgbot.Bot, ctx *ext.Context) error {
 	if !ok {
 		return nil
 	}
-	args := ctx.Args()
+	args := getCommandArgs(ctx)
 	if len(args) == 0 {
 		_, _ = m.Reply(bot, "Please specify a flood limit (messages per 5 seconds). Example: <code>/setflood 5</code> (0 to disable)", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 		return nil
@@ -1865,7 +1874,7 @@ func SetCaptcha(bot *gotgbot.Bot, ctx *ext.Context) error {
 	if !ok {
 		return nil
 	}
-	args := ctx.Args()
+	args := getCommandArgs(ctx)
 	if len(args) == 0 {
 		_, _ = m.Reply(bot, "Please specify captcha state: <code>on</code> or <code>off</code>.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 		return nil
@@ -1903,7 +1912,7 @@ func SetCaptchaTime(bot *gotgbot.Bot, ctx *ext.Context) error {
 	if !ok {
 		return nil
 	}
-	args := ctx.Args()
+	args := getCommandArgs(ctx)
 	if len(args) == 0 {
 		_, _ = m.Reply(bot, "Please specify captcha timeout in seconds. Example: <code>/captchatime 300</code>", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 		return nil
@@ -1985,7 +1994,7 @@ func SetAntiRaid(bot *gotgbot.Bot, ctx *ext.Context) error {
 	if !ok {
 		return nil
 	}
-	args := ctx.Args()
+	args := getCommandArgs(ctx)
 	if len(args) == 0 {
 		_, _ = m.Reply(bot, "Please specify antiraid state: <code>on</code> or <code>off</code>.", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
 		return nil
