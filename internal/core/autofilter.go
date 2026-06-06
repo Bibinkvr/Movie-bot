@@ -32,6 +32,57 @@ func cleanCompareString(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+func levenshtein(s, t string) int {
+	d := make([][]int, len(s)+1)
+	for i := range d {
+		d[i] = make([]int, len(t)+1)
+		d[i][0] = i
+	}
+	for j := range d[0] {
+		d[0][j] = j
+	}
+	for i := 1; i <= len(s); i++ {
+		for j := 1; j <= len(t); j++ {
+			if s[i-1] == t[j-1] {
+				d[i][j] = d[i-1][j-1]
+			} else {
+				min := d[i-1][j]
+				if d[i][j-1] < min {
+					min = d[i][j-1]
+				}
+				if d[i-1][j-1] < min {
+					min = d[i-1][j-1]
+				}
+				d[i][j] = min + 1
+			}
+		}
+	}
+	return d[len(s)][len(t)]
+}
+
+func parseSuggestion(sug string) (string, string) {
+	re := regexp.MustCompile(`\s*\((\d{4})\)$`)
+	match := re.FindStringSubmatch(sug)
+	if len(match) == 2 {
+		year := match[1]
+		title := strings.TrimSpace(re.ReplaceAllString(sug, ""))
+		return title, year
+	}
+	return sug, ""
+}
+
+func cleanForSpellingCompare(s string) string {
+	s = strings.ToLower(s)
+	// Remove year like 2026
+	reYear := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+	s = reYear.ReplaceAllString(s, "")
+	// Remove non-alphanumeric
+	reNonAlpha := regexp.MustCompile(`[^a-z0-9]`)
+	s = reNonAlpha.ReplaceAllString(s, " ")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+
 func Autofilter(bot *gotgbot.Bot, ctx *ext.Context) error {
 	if ctx.EffectiveChat != nil && ctx.EffectiveChat.Type != "private" {
 		_ = _app.DB.IncrementGroupSearchCount(ctx.EffectiveChat.Id)
@@ -85,9 +136,11 @@ func Autofilter(bot *gotgbot.Bot, ctx *ext.Context) error {
 func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 	_app.Log.Info("_autofilter function called")
 	var (
-		query        string
-		inputMessage gotgbot.MaybeInaccessibleMessage
-		fromUser     *gotgbot.User
+		query         string
+		originalQuery string
+		inputMessage  gotgbot.MaybeInaccessibleMessage
+		fromUser      *gotgbot.User
+		err           error
 	)
 
 	switch {
@@ -234,30 +287,89 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 		}
 	}()
 
-	cursor, err := _app.DB.SearchFiles(query)
-	if err != nil {
-		_app.Log.Warn("autofilter: search files failed", zap.Error(err))
-		return bot.SendMessage(inputMessage.GetChat().Id, "<i>I'm Having Some Database Issues Right Now 😓\nPlease Try Again Later!</i>", &gotgbot.SendMessageOpts{
-			ReplyParameters: &gotgbot.ReplyParameters{
-				MessageId: inputMessage.GetMessageId(),
-			},
-			ParseMode: gotgbot.ParseModeHTML,
-		})
+	var files []autofilter.Files
+	for attempt := 1; attempt <= 2; attempt++ {
+		dbCursor, dbErr := _app.DB.SearchFiles(query)
+		if dbErr != nil {
+			err = dbErr
+			_app.Log.Warn("autofilter: search files failed", zap.Error(err))
+			return bot.SendMessage(inputMessage.GetChat().Id, "<i>I'm Having Some Database Issues Right Now 😓\nPlease Try Again Later!</i>", &gotgbot.SendMessageOpts{
+				ReplyParameters: &gotgbot.ReplyParameters{
+					MessageId: inputMessage.GetMessageId(),
+				},
+				ParseMode: gotgbot.ParseModeHTML,
+			})
+		}
+
+		cursorFiles, filesErr := autofilter.FilesFromCursor(context.Background(), dbCursor, _app.Config)
+		if filesErr != nil {
+			err = filesErr
+			_app.Log.Warn("autofilter: files from cursor failed", zap.Error(err))
+			return bot.SendMessage(inputMessage.GetChat().Id, "<i>Processing Results Failed 🤖</i>", &gotgbot.SendMessageOpts{
+				ReplyParameters: &gotgbot.ReplyParameters{
+					MessageId: inputMessage.GetMessageId(),
+				},
+				ParseMode: gotgbot.ParseModeHTML,
+			})
+		}
+
+		files = processSearchResults(cursorFiles)
+		_app.Log.Info("_autofilter search result retrieved", zap.String("query", query), zap.Int("files_count", len(files)))
+
+		if len(files) > 0 {
+			break
+		}
+
+		if attempt == 2 {
+			break
+		}
+
+		// Check if we can auto-correct spelling
+		localSugs, sugErr := _app.DB.GetSpellingSuggestions(query)
+		var suggestions []string
+		if sugErr == nil && len(localSugs) > 0 {
+			suggestions = localSugs
+		}
+
+		if len(suggestions) == 0 {
+			suggestions = autofilter.GetSearchSuggestions(query)
+		}
+
+		if len(suggestions) > 0 {
+			firstSug := suggestions[0]
+			sugTitle, _ := parseSuggestion(firstSug)
+
+			qClean := cleanForSpellingCompare(query)
+			sClean := cleanForSpellingCompare(sugTitle)
+
+			qLen := len(qClean)
+			if qLen >= 4 {
+				dist := levenshtein(qClean, sClean)
+				maxDist := 2
+				if qLen < 6 {
+					maxDist = 1
+				}
+
+				if dist <= maxDist {
+					// Clean suggestion for query search (replace parentheses with space)
+					correctedQuery := strings.ReplaceAll(firstSug, "(", " ")
+					correctedQuery = strings.ReplaceAll(correctedQuery, ")", " ")
+					correctedQuery = strings.Join(strings.Fields(correctedQuery), " ")
+
+					originalQuery = query
+					query = correctedQuery
+					_app.Log.Info("autofilter: auto-correcting query", zap.String("original", originalQuery), zap.String("corrected", query), zap.Int("distance", dist))
+					continue
+				}
+			}
+		}
+		break
 	}
 
-	files, err := autofilter.FilesFromCursor(context.Background(), cursor, _app.Config)
-	if err != nil {
-		_app.Log.Warn("autofilter: files from cursor failed", zap.Error(err))
-		return bot.SendMessage(inputMessage.GetChat().Id, "<i>Processing Results Failed 🤖</i>", &gotgbot.SendMessageOpts{
-			ReplyParameters: &gotgbot.ReplyParameters{
-				MessageId: inputMessage.GetMessageId(),
-			},
-			ParseMode: gotgbot.ParseModeHTML,
-		})
+	if len(files) == 0 && originalQuery != "" {
+		query = originalQuery
+		originalQuery = ""
 	}
-
-	files = processSearchResults(files)
-	_app.Log.Info("_autofilter search result retrieved", zap.String("query", query), zap.Int("files_count", len(files)))
 
 	if len(files) == 0 {
 		// 1. Try a local database fuzzy spelling search first (so suggestions are actual files in the DB)
@@ -580,6 +692,10 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 		"results_count": len(allFiles),
 	}))
 
+	if originalQuery != "" {
+		text = fmt.Sprintf("🔍 Showing results for <b>%s</b> (auto-corrected from <b>%s</b>):\n\n", query, originalQuery) + text
+	}
+
 	var (
 		msg     *gotgbot.Message
 		sendErr error
@@ -718,6 +834,10 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 
 		// Fix "TᴏᴛᴀTx" to "Tᴏᴛᴀʟ"
 		redirectText = strings.Replace(redirectText, "TᴏᴛᴀTx", "Tᴏᴛᴀʟ", 1)
+
+		if originalQuery != "" {
+			redirectText = fmt.Sprintf("🔍 Showing results for <b>%s</b> (auto-corrected from <b>%s</b>):\n\n", query, originalQuery) + redirectText
+		}
 
 		redirectButtons := [][]gotgbot.InlineKeyboardButton{
 			{{Text: "📂 View Results 🍿", Url: link}},
