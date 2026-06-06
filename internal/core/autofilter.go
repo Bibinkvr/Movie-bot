@@ -662,18 +662,20 @@ func _autofilter(bot *gotgbot.Bot, ctx *ext.Context) (*gotgbot.Message, error) {
 	}
 
 	// Footer Action Row 1
-	newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "btn_new"}
-	if _app.Config.NewMoviesUrl != "" {
-		newMoviesBtn.Url = _app.Config.NewMoviesUrl
-		newMoviesBtn.CallbackData = ""
-	}
-	updatesBtn := gotgbot.InlineKeyboardButton{Text: "📺 Updates", Style: "success", CallbackData: "ignore"}
-	if _app.Config.UpdatesUrl != "" {
-		updatesBtn.Url = _app.Config.UpdatesUrl
-		updatesBtn.CallbackData = ""
-	}
+	if len(allFiles) > 1 {
+		newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "btn_new"}
+		if _app.Config.NewMoviesUrl != "" {
+			newMoviesBtn.Url = _app.Config.NewMoviesUrl
+			newMoviesBtn.CallbackData = ""
+		}
+		updatesBtn := gotgbot.InlineKeyboardButton{Text: "📺 Updates", Style: "success", CallbackData: "ignore"}
+		if _app.Config.UpdatesUrl != "" {
+			updatesBtn.Url = _app.Config.UpdatesUrl
+			updatesBtn.CallbackData = ""
+		}
 
-	buttons = append(buttons, []gotgbot.InlineKeyboardButton{newMoviesBtn, updatesBtn})
+		buttons = append(buttons, []gotgbot.InlineKeyboardButton{newMoviesBtn, updatesBtn})
+	}
 
 	// Navigation
 	if len(files) > 1 {

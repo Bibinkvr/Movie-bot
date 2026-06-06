@@ -121,17 +121,19 @@ func Navigate(bot *gotgbot.Bot, ctx *ext.Context) error {
 	if isPrivate && len(allFiles) > 1 {
 		buttons = append(buttons, []gotgbot.InlineKeyboardButton{{Text: "✅ Select Multiple Files", CallbackData: fmt.Sprintf("sel|%s_%d", r.UniqueId, pageIndex), Style: "primary"}})
 	}
-	newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "btn_new"}
-	if _app.Config.NewMoviesUrl != "" {
-		newMoviesBtn.Url = _app.Config.NewMoviesUrl
-		newMoviesBtn.CallbackData = ""
+	if len(allFiles) > 1 {
+		newMoviesBtn := gotgbot.InlineKeyboardButton{Text: "🍿 New Movies", Style: "success", CallbackData: "btn_new"}
+		if _app.Config.NewMoviesUrl != "" {
+			newMoviesBtn.Url = _app.Config.NewMoviesUrl
+			newMoviesBtn.CallbackData = ""
+		}
+		updatesBtn := gotgbot.InlineKeyboardButton{Text: "📺 Updates", Style: "success", CallbackData: "ignore"}
+		if _app.Config.UpdatesUrl != "" {
+			updatesBtn.Url = _app.Config.UpdatesUrl
+			updatesBtn.CallbackData = ""
+		}
+		buttons = append(buttons, []gotgbot.InlineKeyboardButton{newMoviesBtn, updatesBtn})
 	}
-	updatesBtn := gotgbot.InlineKeyboardButton{Text: "📺 Updates", Style: "success", CallbackData: "ignore"}
-	if _app.Config.UpdatesUrl != "" {
-		updatesBtn.Url = _app.Config.UpdatesUrl
-		updatesBtn.CallbackData = ""
-	}
-	buttons = append(buttons, []gotgbot.InlineKeyboardButton{newMoviesBtn, updatesBtn})
 
 	// Navigation
 	if len(files) > 1 {
