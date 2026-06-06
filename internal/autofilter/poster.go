@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	posterClient = &http.Client{Timeout: 5 * time.Second}
+	posterClient = &http.Client{Timeout: 1200 * time.Millisecond}
 	posterCache  = make(map[string]string)
 	posterMu     sync.RWMutex
 )
