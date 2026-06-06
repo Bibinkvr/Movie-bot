@@ -121,7 +121,6 @@ func (c *Config) GetHelpMessage() *message.Message {
 ╰ END
 ╭ EXCLUSIVE COMMANDS
 ┊ /broadcast - spam users with ads
-┊ /settings  - customize me
 ┊ /batch     - bunch up messages
 ┊ /genlink   - link to single file
 ┊ /index     - gather up files
@@ -182,7 +181,6 @@ func (c *Config) GetGroupHelpMessage() *message.Message {
 ┊ /promote /demote - Manage admin status
 ┊ /title &lt;text&gt; - Set custom admin title
 ┊ /adminlist - List chat admins
-┊ /anonadmin - Toggle anonymous admin check
 ╰ END`
 
 	buttons := [][]button.InlineKeyboardButton{
