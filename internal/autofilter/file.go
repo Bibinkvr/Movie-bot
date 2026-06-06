@@ -240,29 +240,38 @@ func FormatFileButtonText(fileName string, fileSize int64) string {
 			seriesParts = fmt.Sprintf("E%02d", e)
 		}
 
-		titleAndSeason := title
-		if seriesParts != "" {
-			titleAndSeason = fmt.Sprintf("%s %s", title, seriesParts)
+		boldSize := toBoldSansSerif(sizeStr)
+		boldTitle := toBoldSansSerif(title)
+
+		parts := []string{
+			fmt.Sprintf("📺 [%s] ➤", boldSize),
 		}
-		if year != "" {
-			titleAndSeason = fmt.Sprintf("%s (%s)", titleAndSeason, year)
+		if seriesParts != "" {
+			parts = append(parts, fmt.Sprintf("[%s]", toBoldSansSerif(seriesParts)))
 		}
 
+		titlePart := boldTitle
+		if year != "" {
+			titlePart = fmt.Sprintf("%s (%s)", titlePart, year)
+		}
+		parts = append(parts, titlePart)
+
+		btnText = strings.Join(parts, " ")
 		if infoStr != "" {
-			btnText = fmt.Sprintf("📺 [%s] %s [%s]", sizeStr, titleAndSeason, infoStr)
-		} else {
-			btnText = fmt.Sprintf("📺 [%s] %s", sizeStr, titleAndSeason)
+			btnText = fmt.Sprintf("%s  %s", btnText, toBoldSansSerif(infoStr))
 		}
 	} else {
-		movieTitle := title
+		boldSize := toBoldSansSerif(sizeStr)
+		boldTitle := toBoldSansSerif(title)
+
+		titlePart := boldTitle
 		if year != "" {
-			movieTitle = fmt.Sprintf("%s (%s)", movieTitle, year)
+			titlePart = fmt.Sprintf("%s (%s)", titlePart, year)
 		}
 
+		btnText = fmt.Sprintf("🎬 [%s] ➤ %s", boldSize, titlePart)
 		if infoStr != "" {
-			btnText = fmt.Sprintf("🎬 [%s] %s [%s]", sizeStr, movieTitle, infoStr)
-		} else {
-			btnText = fmt.Sprintf("🎬 [%s] %s", sizeStr, movieTitle)
+			btnText = fmt.Sprintf("%s  %s", btnText, toBoldSansSerif(infoStr))
 		}
 	}
 
@@ -484,4 +493,21 @@ func CleanFileNameForDisplay(name string) string {
 	}
 	name = strings.ReplaceAll(name, ".", " ")
 	return strings.Join(strings.Fields(name), " ")
+}
+
+// toBoldSansSerif converts ASCII alphanumeric characters in a string to Unicode Mathematical Bold Sans-serif characters.
+func toBoldSansSerif(s string) string {
+	var result []rune
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			result = append(result, r+120764)
+		} else if r >= 'A' && r <= 'Z' {
+			result = append(result, r+120211)
+		} else if r >= 'a' && r <= 'z' {
+			result = append(result, r+120205)
+		} else {
+			result = append(result, r)
+		}
+	}
+	return string(result)
 }
