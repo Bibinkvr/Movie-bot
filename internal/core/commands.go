@@ -86,6 +86,7 @@ func StaticCommands(bot *gotgbot.Bot, ctx *ext.Context) error {
 			"go_version": runtime.Version(),
 			"cpu":        func() string { if p, err := cpu.Percent(0, false); err == nil && len(p) > 0 { return fmt.Sprintf("%.2f%%", p[0]) } else { return "N/A" } }(),
 			"ram":        func() string { if v, err := mem.VirtualMemory(); err == nil { return fmt.Sprintf("%.2f%%", v.UsedPercent) } else { return "N/A" } }(),
+			"bot_ram":    func() string { var m runtime.MemStats; runtime.ReadMemStats(&m); return fmt.Sprintf("%.2f MB", float64(m.Alloc)/(1024*1024)) }(),
 			"free":       func() string { if d, err := disk.Usage("."); err == nil { return fmt.Sprintf("%.2fGB", float64(d.Free)/(1<<30)) } else { return "N/A" } }(),
 			"uptime":    time.Since(_app.GetStartTime()).Truncate(time.Second).String(),
 		}

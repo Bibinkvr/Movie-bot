@@ -67,6 +67,7 @@ func (c *Config) GetAboutMessage() *message.Message {
 		text = `⌬ SYSTEM STATUS
 ╭ CPU  : {cpu}
 ┊ RAM  : {ram}
+┊ Bot RAM : {bot_ram}
 ┊ FREE : {free}
 ┊ Language : {go_version}
 ┊ os    : {os}
