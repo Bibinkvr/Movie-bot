@@ -40,7 +40,7 @@ func RemoveExtension(input string) string {
 	}
 
 	index := strings.LastIndex(input, ".")
-	if (len(input) - index) <= 4 { // if last index of . is within 4 character range of end of string then cut around it
+	if (len(input) - index) <= 5 { // if last index of . is within 5 character range of end of string then cut around it
 		input = input[:index]
 	}
 

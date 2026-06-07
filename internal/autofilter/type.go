@@ -213,8 +213,14 @@ var languageRegexes = map[string]*regexp.Regexp{
 	"Telugu":    regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(telugu|tel)(?:[^a-zA-Z0-9]|$)`),
 	"Malayalam": regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(malayalam|mal)(?:[^a-zA-Z0-9]|$)`),
 	"Kannada":   regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(kannada|kan)(?:[^a-zA-Z0-9]|$)`),
-	"Multi":     regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(multi|dual|mux)(?:[^a-zA-Z0-9]|$)`),
+	"Bengali":   regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(bengali|ben)(?:[^a-zA-Z0-9]|$)`),
+	"Marathi":   regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(marathi|mar)(?:[^a-zA-Z0-9]|$)`),
+	"Bhojpuri":  regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(bhojpuri)(?:[^a-zA-Z0-9]|$)`),
+	"Punjabi":   regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(punjabi|pun)(?:[^a-zA-Z0-9]|$)`),
+	"Gujarati":  regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(gujarati|guj)(?:[^a-zA-Z0-9]|$)`),
 }
+
+var multiRegex = regexp.MustCompile(`(?i)(?:[^a-zA-Z0-9]|^)(multi|dual|mux|dubbed|dub)(?:[^a-zA-Z0-9]|$)`)
 
 // DetectLanguages extracts available languages from the file list.
 func DetectLanguages(files []File) []string {
@@ -225,6 +231,9 @@ func DetectLanguages(files []File) []string {
 			if regex.MatchString(f.FileName) {
 				langs[name] = true
 			}
+		}
+		if multiRegex.MatchString(f.FileName) {
+			langs["Multi"] = true
 		}
 	}
 
@@ -290,6 +299,17 @@ func ExtractBaseTitle(name string) string {
 	title = strings.TrimRight(title, "([]{}-_ ")
 	title = strings.TrimSpace(title)
 	title = strings.Join(strings.Fields(title), " ")
+
+	// Strip trailing languages/audio tags from title
+	langRegex := regexp.MustCompile(`(?i)\s+\b(hindi|hin|english|eng|tamil|tam|telugu|tel|malayalam|mal|kannada|kan|multi|dual|mux|dubbed|dub|org|original|sub|subs|esub|esubs|hqc|hq|clean|hevc|x264|x265|av1|rip|web-dl|webrip|hdr|10bit)\b\s*$`)
+	for {
+		old := title
+		title = langRegex.ReplaceAllString(title, "")
+		title = strings.TrimSpace(title)
+		if title == old {
+			break
+		}
+	}
 
 	// Title case
 	if title != "" {

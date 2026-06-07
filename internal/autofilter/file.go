@@ -14,7 +14,13 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-var promoRegex = regexp.MustCompile(`(?i)(?:\[\s*@\w+\s*\]|\(\s*@\w+\s*\)|@\w+)`)
+var (
+	promoRegex   = regexp.MustCompile(`(?i)(?:\[\s*@\w+\s*\]|\(\s*@\w+\s*\)|@\w+)`)
+	resRegex     = regexp.MustCompile(`(?i)(2160p|1080p|720p|480p|360p|4k)`)
+	sourceRegex  = regexp.MustCompile(`(?i)(bluray|web-dl|webrip|hdtv|camrip|brrip|dvdrip|hdrip|tc|ts)`)
+	versionRegex = regexp.MustCompile(`(?i)\b(color|bw|b&w|black\s+and\s+white|imax|remastered|extended|unrated|directors?\s+cut|dc|special\s+edition|se|proper|repack)\b`)
+	bracketRegex = regexp.MustCompile(`^(?i)(?:\[[^\]]+\]|\([^\)]+\))\s*`)
+)
 
 type Files []File
 
@@ -91,7 +97,6 @@ func FormatFileButtonText(fileName string, fileSize int64) string {
 
 	// 4. Extract year
 	year := ""
-	yearRegex := regexp.MustCompile(`\b(19|20)\d{2}\b`)
 	if match := yearRegex.FindString(cleanedName); match != "" {
 		year = match
 	}
@@ -100,40 +105,14 @@ func FormatFileButtonText(fileName string, fileSize int64) string {
 	isSeries := IsSeriesFile(cleanedName)
 	s, e := ExtractSeriesMetadata(cleanedName)
 
-	// 6. Extract language
+	// 6. Extract language using word-boundary regexes to avoid false positives
+	//    (e.g. "kanmani" must NOT match "kan" for Kannada)
 	var langs []string
-	langMap := map[string][]string{
-		"Hindi":     {"hindi", "hin"},
-		"English":   {"english", "eng"},
-		"Tamil":     {"tamil", "tam"},
-		"Telugu":    {"telugu", "tel"},
-		"Malayalam": {"malayalam", "mal"},
-		"Kannada":   {"kannada", "kan"},
-		"Bengali":   {"bengali", "ben"},
-		"Marathi":   {"marathi", "mar"},
-		"Bhojpuri":  {"bhojpuri"},
-		"Punjabi":   {"punjabi", "pun"},
-		"Gujarati":  {"gujarati", "guj"},
-		"Multi":     {"multi", "dual", "mux", "dubbed", "dub"},
-	}
+	isMulti := multiRegex.MatchString(lowerName)
 
-	isMulti := false
-	for _, tag := range langMap["Multi"] {
-		if strings.Contains(lowerName, tag) {
-			isMulti = true
-			break
-		}
-	}
-
-	for name, tags := range langMap {
-		if name == "Multi" {
-			continue
-		}
-		for _, tag := range tags {
-			if strings.Contains(lowerName, tag) {
-				langs = append(langs, name)
-				break
-			}
+	for name, regex := range languageRegexes {
+		if regex.MatchString(lowerName) {
+			langs = append(langs, name)
 		}
 	}
 
@@ -141,17 +120,16 @@ func FormatFileButtonText(fileName string, fileSize int64) string {
 	if isMulti {
 		langStr = "Multi"
 	} else if len(langs) > 0 {
+		slices.Sort(langs)
 		langStr = strings.Join(langs, "-")
 	}
 
 	// 7. Extract quality
 	quality := ""
-	resRegex := regexp.MustCompile(`(?i)(2160p|1080p|720p|480p|360p|4k)`)
 	if match := resRegex.FindString(cleanedName); match != "" {
 		quality = strings.ToUpper(match)
 	}
 
-	sourceRegex := regexp.MustCompile(`(?i)(bluray|web-dl|webrip|hdtv|camrip|brrip|dvdrip|hdrip|tc|ts)`)
 	if match := sourceRegex.FindString(cleanedName); match != "" {
 		src := strings.ToUpper(match)
 		if quality != "" {
@@ -163,7 +141,6 @@ func FormatFileButtonText(fileName string, fileSize int64) string {
 
 	// Extract version/edition
 	version := ""
-	versionRegex := regexp.MustCompile(`(?i)\b(color|bw|b&w|black\s+and\s+white|imax|remastered|extended|unrated|directors?\s+cut|dc|special\s+edition|se|proper|repack)\b`)
 	if match := versionRegex.FindString(cleanedName); match != "" {
 		vUpper := strings.ToUpper(match)
 		switch vUpper {
@@ -176,7 +153,6 @@ func FormatFileButtonText(fileName string, fileSize int64) string {
 
 	// 8. Extract clean title
 	title := ExtractBaseTitle(fileName)
-	bracketRegex := regexp.MustCompile(`^(?i)(?:\[[^\]]+\]|\([^\)]+\))\s*`)
 	for {
 		loc := bracketRegex.FindString(title)
 		if loc == "" {
@@ -387,33 +363,36 @@ func (files Files) FilterBySeason(s int) Files {
 func (files Files) FilterByLanguage(lang string) Files {
 	result := make(Files, 0, len(files))
 	lang = strings.ToLower(lang)
-	
-	patterns := map[string][]string{
-		"hindi":     {"hindi", "hin"},
-		"english":   {"english", "eng"},
-		"tamil":     {"tamil", "tam"},
-		"telugu":    {"telugu", "tel"},
-		"malayalam": {"malayalam", "mal"},
-		"kannada":   {"kannada", "kan"},
-		"multi":     {"multi", "dual", "mux"},
+
+	if lang == "multi" {
+		for _, f := range files {
+			if multiRegex.MatchString(f.FileName) {
+				result = append(result, f)
+			}
+		}
+		return result
 	}
 
-	searchTags, ok := patterns[lang]
-	if !ok {
-		// If not in our patterns, just try literal match
-		searchTags = []string{lang}
+	var rx *regexp.Regexp
+	for name, regex := range languageRegexes {
+		if strings.ToLower(name) == lang {
+			rx = regex
+			break
+		}
+	}
+
+	if rx == nil {
+		// Fallback to word boundary regex
+		escaped := regexp.QuoteMeta(lang)
+		var err error
+		rx, err = regexp.Compile(`(?i)(?:[^a-zA-Z0-9]|^)(` + escaped + `)(?:[^a-zA-Z0-9]|$)`)
+		if err != nil {
+			rx = regexp.MustCompile(`(?!)`)
+		}
 	}
 
 	for _, f := range files {
-		lower := strings.ToLower(f.FileName)
-		found := false
-		for _, tag := range searchTags {
-			if strings.Contains(lower, tag) {
-				found = true
-				break
-			}
-		}
-		if found {
+		if rx.MatchString(f.FileName) {
 			result = append(result, f)
 		}
 	}

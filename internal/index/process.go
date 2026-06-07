@@ -25,32 +25,24 @@ func (o *Operation) MessageProcessor(ctx context.Context, c chan []telegram.Mess
 			for _, m := range msgs {
 				msg, ok := m.(*telegram.MessageObj)
 				if !ok {
-					o.mu.Lock()
-					o.Failed++
-					o.mu.Unlock()
+					// Silently skip non-MessageObj messages
 					continue
 				}
 
 				if msg.Media == nil {
-					o.mu.Lock()
-					o.Failed++
-					o.mu.Unlock()
+					// Silently skip messages with no media (e.g. simple text)
 					continue
 				}
 
 				media, ok := msg.Media.(*telegram.MessageMediaDocument)
 				if !ok {
-					o.mu.Lock()
-					o.Failed++
-					o.mu.Unlock()
+					// Silently skip non-document messages (e.g. photos, webpage previews, location)
 					continue
 				}
 
 				doc, ok := media.Document.(*telegram.DocumentObj)
 				if !ok {
-					o.mu.Lock()
-					o.Failed++
-					o.mu.Unlock()
+					// Silently skip if document object is empty/invalid
 					continue
 				}
 
@@ -74,9 +66,12 @@ func (o *Operation) MessageProcessor(ctx context.Context, c chan []telegram.Mess
 				}
 
 				if unsupportedDocument || fileName == "" {
-					o.mu.Lock()
-					o.Failed++
-					o.mu.Unlock()
+					// Silently skip unsupported documents (animated, audio, sticker)
+					continue
+				}
+
+				// Filter out non-video and non-archive documents, or garbage files
+				if functions.IsGarbageFile(fileName) || !functions.HasVideoOrArchiveExtension(fileName) {
 					continue
 				}
 
@@ -100,7 +95,7 @@ func (o *Operation) MessageProcessor(ctx context.Context, c chan []telegram.Mess
 				file := &model.File{
 					UniqueId: functions.RandString(15),
 					FileId:   fileID,
-					FileName: functions.CleanPromoFromName(fileName),
+					FileName: functions.RemoveSymbols(functions.CleanPromoFromName(functions.RemoveExtension(fileName))),
 					FileType: fileType,
 					FileSize: int64(doc.Size),
 					Time:     int64(msg.Date),

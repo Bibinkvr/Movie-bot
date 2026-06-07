@@ -1624,7 +1624,7 @@ func processSearchResults(files []autofilter.Files) []autofilter.Files {
 
 	for _, f := range allFiles {
 		fid := f.FileId
-		nameSizeKey := fmt.Sprintf("%s_%d", f.FileName, f.FileSize)
+		nameSizeKey := fmt.Sprintf("%s_%d", strings.ToLower(f.FileName), f.FileSize)
 
 		if fid != "" && seenFileId[fid] {
 			continue

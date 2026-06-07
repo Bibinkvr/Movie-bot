@@ -22,13 +22,13 @@ func (c *Client) SaveFile(f *model.File) error {
 		return database.FileAlreadyExistsError{FileName: f.FileName}
 	}
 
-	// Find a document with the exact same file_name and within a 100 byte range of file_size
-	duplicateFilter := bson.D{
-		{Key: "file_name", Value: f.FileName},
-		{Key: "file_size", Value: bson.D{
-			{Key: "$gte", Value: f.FileSize - 100},
-			{Key: "$lte", Value: f.FileSize + 100},
-		}},
+	// Find a document with the same file_name (case-insensitive) and within a 100 byte range of file_size
+	duplicateFilter := bson.M{
+		"file_name": bson.M{"$regex": "^" + regexp.QuoteMeta(f.FileName) + "$", "$options": "i"},
+		"file_size": bson.M{
+			"$gte": f.FileSize - 100,
+			"$lte": f.FileSize + 100,
+		},
 	}
 	if res := c.fileCollection.FindOne(c.ctx, duplicateFilter); res.Err() != mongo.ErrNoDocuments {
 		return database.FileAlreadyExistsError{FileName: f.FileName}
@@ -72,7 +72,7 @@ func (c *Client) BulkSaveFiles(files []*model.File) error {
 
 		hasInMemoryDup := false
 		for _, sns := range seenNameSizes {
-			if sns.name == f.FileName && f.FileSize >= sns.size-100 && f.FileSize <= sns.size+100 {
+			if strings.EqualFold(sns.name, f.FileName) && f.FileSize >= sns.size-100 && f.FileSize <= sns.size+100 {
 				hasInMemoryDup = true
 				break
 			}
@@ -95,7 +95,7 @@ func (c *Client) BulkSaveFiles(files []*model.File) error {
 	for _, f := range uniqueFiles {
 		orFilters = append(orFilters, bson.M{"file_id": f.FileId})
 		orFilters = append(orFilters, bson.M{
-			"file_name": f.FileName,
+			"file_name": bson.M{"$regex": "^" + regexp.QuoteMeta(f.FileName) + "$", "$options": "i"},
 			"file_size": bson.M{
 				"$gte": f.FileSize - 100,
 				"$lte": f.FileSize + 100,
@@ -116,7 +116,8 @@ func (c *Client) BulkSaveFiles(files []*model.File) error {
 					existingFileIds[dbf.FileId] = true
 				}
 				if dbf.FileName != "" {
-					existingNameSizes[dbf.FileName] = append(existingNameSizes[dbf.FileName], dbf.FileSize)
+					lowerName := strings.ToLower(dbf.FileName)
+					existingNameSizes[lowerName] = append(existingNameSizes[lowerName], dbf.FileSize)
 				}
 			}
 		}
@@ -126,7 +127,8 @@ func (c *Client) BulkSaveFiles(files []*model.File) error {
 	var models []mongo.WriteModel
 	for _, f := range uniqueFiles {
 		hasDup := false
-		if sizes, ok := existingNameSizes[f.FileName]; ok {
+		lowerName := strings.ToLower(f.FileName)
+		if sizes, ok := existingNameSizes[lowerName]; ok {
 			for _, sz := range sizes {
 				if sz >= f.FileSize-100 && sz <= f.FileSize+100 {
 					hasDup = true
@@ -219,22 +221,36 @@ func (c *Client) SearchFiles(query string) (database.Cursor, error) {
 		"multi":     "(multi|dual|mux)",
 	}
 
+	descriptiveCount := 0
+	var nonDescriptiveRegex = regexp.MustCompile(`(?i)^\b(19\d\d|20\d\d|\d{3,4}p|4k|bluray|webrip|web|hdrip|brrip|hdtv|x264|x265|hevc|h264|h265|camrip|dd5\.1|dual|multi|hindi|english|tamil|telugu|malayalam|kannada|bengali|marathi|bhojpuri|punjabi|gujarati)\b$`)
+	for _, word := range words {
+		if !nonDescriptiveRegex.MatchString(word) && len(word) > 2 {
+			descriptiveCount++
+		}
+	}
+
 	var searchWords []string
 	// Compile regexes for Go-side filtering (avoids slow MongoDB lookahead scans)
 	var goRegexes []*regexp.Regexp
 	for _, word := range words {
 		lowerWord := strings.ToLower(word)
+		isNonDescriptive := nonDescriptiveRegex.MatchString(word)
+
 		if aliasGroup, ok := languageAliases[lowerWord]; ok {
-			searchWords = append(searchWords,
-				strings.ReplaceAll(strings.ReplaceAll(aliasGroup, "(", ""), ")", ""),
-				strings.ReplaceAll(aliasGroup, "|", " "),
-			)
+			if descriptiveCount <= 0 {
+				searchWords = append(searchWords,
+					strings.ReplaceAll(strings.ReplaceAll(aliasGroup, "(", ""), ")", ""),
+					strings.ReplaceAll(aliasGroup, "|", " "),
+				)
+			}
 			re, err := regexp.Compile(fmt.Sprintf("(?i)(?:[^a-zA-Z0-9]|^)(?:%s)(?:[^a-zA-Z0-9]|$)", aliasGroup))
 			if err == nil {
 				goRegexes = append(goRegexes, re)
 			}
 		} else {
-			searchWords = append(searchWords, word)
+			if !(descriptiveCount > 0 && isNonDescriptive) {
+				searchWords = append(searchWords, word)
+			}
 			quotedWord := regexp.QuoteMeta(word)
 			var rePattern string
 			if matched, _ := regexp.MatchString("(?i)^s\\d+$", word); matched {
@@ -361,6 +377,17 @@ func extractTitle(fileName string) (string, string) {
 	// Clean extra spaces
 	titleFields := strings.Fields(title)
 	title = strings.Join(titleFields, " ")
+	
+	// Strip trailing languages/audio tags from title
+	langRegex := regexp.MustCompile(`(?i)\s+\b(hindi|hin|english|eng|tamil|tam|telugu|tel|malayalam|mal|kannada|kan|multi|dual|mux|dubbed|dub|org|original|sub|subs|esub|esubs|hqc|hq|clean|hevc|x264|x265|av1|rip|web-dl|webrip|hdr|10bit)\b\s*$`)
+	for {
+		old := title
+		title = langRegex.ReplaceAllString(title, "")
+		title = strings.TrimSpace(title)
+		if title == old {
+			break
+		}
+	}
 	
 	return title, year
 }
