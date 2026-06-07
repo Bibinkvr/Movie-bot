@@ -107,6 +107,30 @@ func isYear2026(relDate string) bool {
 	return false
 }
 
+// makeTMDBRequest constructs an http.Request for TMDB, adapting to either v3 API Key or v4 Read Access Token (JWT).
+func makeTMDBRequest(ctx context.Context, method, urlStr, apiKey string) (*http.Request, error) {
+	isJWT := len(apiKey) > 32
+	if isJWT {
+		if u, err := url.Parse(urlStr); err == nil {
+			q := u.Query()
+			q.Del("api_key")
+			u.RawQuery = q.Encode()
+			urlStr = u.String()
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if isJWT {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	return req, nil
+}
+
 func verifyIndianMovieTMDB(ctx context.Context, client *http.Client, apiKey string, title string) (bool, string, string, float64, []int) {
 	if apiKey == "" {
 		return true, "", "", 0, nil
@@ -115,7 +139,7 @@ func verifyIndianMovieTMDB(ctx context.Context, client *http.Client, apiKey stri
 	query := url.QueryEscape(title)
 	u := fmt.Sprintf("%s/search/movie?api_key=%s&query=%s&language=en-US&page=1", tmdbBase, apiKey, query)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	req, err := makeTMDBRequest(ctx, "GET", u, apiKey)
 	if err != nil {
 		return false, "", "", 0, nil
 	}
@@ -354,7 +378,7 @@ func FormatItemKeyboard(item ReleaseItem) gotgbot.InlineKeyboardMarkup {
 // Fetch TMDB Watch Providers
 func _fetchTMDBProviders(ctx context.Context, client *http.Client, mediaType string, tmdbID int, apiKey, country string) ([]string, error) {
 	u := fmt.Sprintf("%s/%s/%d/watch/providers?api_key=%s", tmdbBase, mediaType, tmdbID, apiKey)
-	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	req, err := makeTMDBRequest(ctx, "GET", u, apiKey)
 	if err != nil {
 		return nil, err
 	}
@@ -447,7 +471,7 @@ func _fetchTMDB(ctx context.Context, client *http.Client, daysBack int, db datab
 	u := fmt.Sprintf("%s/discover/%s?api_key=%s&language=en-US&sort_by=popularity.desc&with_watch_monetization_types=flatrate|free|ads&watch_region=%s&%s.gte=%s&%s.lte=%s&with_origin_country=IN&page=1",
 		tmdbBase, mt, apiKey, country, dateField, since, dateField, today)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	req, err := makeTMDBRequest(ctx, "GET", u, apiKey)
 	if err != nil {
 		return nil, err
 	}
