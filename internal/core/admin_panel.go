@@ -31,13 +31,13 @@ func AdminPanel(bot *gotgbot.Bot, ctx *ext.Context) error {
 			
 			// === CONFIG SETTINGS ===
 			// Row 6: Size Button, Poster, Results Channel
-			{{Text: "Size Button 📏", CallbackData: "config:home:sizebtn"}, {Text: "Poster 🖼️", CallbackData: "config:home:poster"}, {Text: "Results Chan 📢", CallbackData: "config:home:reschan"}},
+			{{Text: "Size Button 📏", CallbackData: "config:sizebtn"}, {Text: "Poster 🖼️", CallbackData: "config:poster"}, {Text: "Results Chan 📢", CallbackData: "config:reschan"}},
 			// Row 7: Auto Delete, File AutoDelete
-			{{Text: "Auto Delete ⏱️", CallbackData: "config:home:autodel"}, {Text: "File AutoDelete 📁", CallbackData: "config:home:filedel"}},
+			{{Text: "Auto Delete ⏱️", CallbackData: "config:autodel"}, {Text: "File AutoDelete 📁", CallbackData: "config:filedel"}},
 			// Row 8: Monitored Chans, Force Sub Page
-			{{Text: "Monitored Chans 🎧", CallbackData: "config:home:moniterd"}, {Text: "Force Sub Page 🔒", CallbackData: "config:home:fsub"}},
+			{{Text: "Monitored Chans 🎧", CallbackData: "config:moniterd"}, {Text: "Force Sub Page 🔒", CallbackData: "config:fsub"}},
 			// Row 9: Group Defaults, Database Config
-			{{Text: "Group Defaults 👥", CallbackData: "config:home:group"}, {Text: "Database Config 📂", CallbackData: "config:home:db"}},
+			{{Text: "Group Defaults 👥", CallbackData: "config:group"}, {Text: "Database Config 📂", CallbackData: "config:db"}},
 			
 			// Row 10: Close
 			{{Text: "Close ❌", CallbackData: "admin:close"}},
