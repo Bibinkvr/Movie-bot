@@ -139,7 +139,6 @@ func getCustomTitle(member gotgbot.ChatMember) string {
 	return ""
 }
 
-
 // Helper to prevent group command usage in private chats
 func checkPrivateChat(bot *gotgbot.Bot, m *gotgbot.Message) bool {
 	if m.Chat.Type == "private" {
@@ -174,7 +173,6 @@ func resolveChatIDAndVerifyAdmin(bot *gotgbot.Bot, m *gotgbot.Message) (int64, b
 	}
 	return m.Chat.Id, true
 }
-
 
 // Check if a user is admin in the chat
 func IsUserAdmin(bot *gotgbot.Bot, chatID, userID int64) (bool, error) {
@@ -1006,19 +1004,84 @@ func HandleGroupLocks(bot *gotgbot.Bot, ctx *ext.Context) error {
 	return nil
 }
 
-// Generates Group Settings Inline Keyboard Markup
+// Generates Group Settings Inline Keyboard Markup (Main Dashboard)
 func getGroupSettingsMarkup(cfg *model.GroupConfig) gotgbot.InlineKeyboardMarkup {
+	return gotgbot.InlineKeyboardMarkup{
+		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+			{
+				{Text: "Moderation 👮", CallbackData: "gcfg:mod_menu"},
+				{Text: "Welcome/Goodbye 📨", CallbackData: "gcfg:greetings_menu"},
+			},
+			{
+				{Text: "Anti-Spam 🚫", CallbackData: "gcfg:antispam_menu"},
+				{Text: "Settings ⚙️", CallbackData: "gcfg:settings_view"},
+			},
+			{
+				{Text: "Close 🗑️", CallbackData: "gcfg:close"},
+			},
+		},
+	}
+}
+
+// Generates Moderation Submenu Markup
+func getGroupModMarkup() gotgbot.InlineKeyboardMarkup {
+	return gotgbot.InlineKeyboardMarkup{
+		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+			{
+				{Text: "Ban User 🔨", CallbackData: "gcfg:mod_ban"},
+				{Text: "Mute User 🤐", CallbackData: "gcfg:mod_mute"},
+			},
+			{
+				{Text: "Kick User 👢", CallbackData: "gcfg:mod_kick"},
+				{Text: "Unban User ❌", CallbackData: "gcfg:mod_unban"},
+			},
+			{
+				{Text: "Back 🔙", CallbackData: "gcfg:home"},
+			},
+		},
+	}
+}
+
+// Generates Welcome/Goodbye Submenu Markup
+func getGroupGreetingsMarkup(cfg *model.GroupConfig) gotgbot.InlineKeyboardMarkup {
 	welcomeStatus := "❌ Disabled"
 	if cfg.WelcomeEnabled {
 		welcomeStatus = "✅ Enabled"
 	}
+	goodbyeStatus := "❌ Disabled"
+	if cfg.GoodbyeEnabled {
+		goodbyeStatus = "✅ Enabled"
+	}
 
 	return gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-			{{Text: "Welcome Message: " + welcomeStatus, CallbackData: "gcfg:welcome_toggle"}},
-			{{Text: "Edit Welcome Text 📝", CallbackData: "gcfg:welcome_edit"}},
-			{{Text: "Content Locks 🔒", CallbackData: "gcfg:locks_menu"}},
-			{{Text: "Close 🗑️", CallbackData: "gcfg:close"}},
+			{
+				{Text: "Welcome: " + welcomeStatus, CallbackData: "gcfg:welcome_toggle"},
+				{Text: "Edit Welcome 📝", CallbackData: "gcfg:welcome_edit"},
+			},
+			{
+				{Text: "Goodbye: " + goodbyeStatus, CallbackData: "gcfg:goodbye_toggle"},
+				{Text: "Edit Goodbye 📝", CallbackData: "gcfg:goodbye_edit"},
+			},
+			{
+				{Text: "View Texts 📄", CallbackData: "gcfg:welcome_view"},
+				{Text: "Back 🔙", CallbackData: "gcfg:home"},
+			},
+		},
+	}
+}
+
+// Generates Anti-Spam Submenu Markup
+func getGroupAntiSpamMarkup(cfg *model.GroupConfig) gotgbot.InlineKeyboardMarkup {
+	return gotgbot.InlineKeyboardMarkup{
+		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+			{
+				{Text: "Content Locks 🔒", CallbackData: "gcfg:locks_menu"},
+				{Text: "Flood Limit ⏲️", CallbackData: "gcfg:flood_limit_edit"},
+			},
+			{
+				{Text: "Back 🔙", CallbackData: "gcfg:home"},
+			},
 		},
 	}
 }
@@ -1047,7 +1110,7 @@ func getGroupLocksMarkup(cfg *model.GroupConfig) gotgbot.InlineKeyboardMarkup {
 				{Text: "Service: " + status("service"), CallbackData: "gcfg:lock_toggle:service"},
 			},
 			{
-				{Text: "Back 🔙", CallbackData: "gcfg:home"},
+				{Text: "Back 🔙", CallbackData: "gcfg:antispam_menu"},
 			},
 		},
 	}
@@ -1070,7 +1133,7 @@ func GroupSettings(bot *gotgbot.Bot, ctx *ext.Context) error {
 		cfg = &model.GroupConfig{ChatID: chatID}
 	}
 
-	text := "<b>⚙️ Group Settings Panel</b>\n\nConfigure welcome messages and content locks below."
+	text := "<b>[ ⚙️ Group Management Dashboard ]</b>\n\nWelcome to the Admin settings panel. Please select a category below to configure group options."
 	_, err = m.Reply(bot, text, &gotgbot.SendMessageOpts{
 		ParseMode:   gotgbot.ParseModeHTML,
 		ReplyMarkup: getGroupSettingsMarkup(cfg),
@@ -1119,17 +1182,136 @@ func GroupSettingsCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
 	data := c.Data
 	if data == "gcfg:home" {
 		_, _ = c.Answer(bot, nil)
-		_, _, _ = m.EditText(bot, "<b>⚙️ Group Settings Panel</b>\n\nConfigure welcome messages and content locks below.", &gotgbot.EditMessageTextOpts{
+		_, _, _ = m.EditText(bot, "<b>[ ⚙️ Group Management Dashboard ]</b>\n\nWelcome to the Admin settings panel. Please select a category below to configure group options.", &gotgbot.EditMessageTextOpts{
 			ParseMode:   gotgbot.ParseModeHTML,
 			ReplyMarkup: getGroupSettingsMarkup(cfg),
+		})
+	} else if data == "gcfg:mod_menu" {
+		_, _ = c.Answer(bot, nil)
+		_, _, _ = m.EditText(bot, "<b>👮 Moderation Action Panel</b>\n\nManage group members by issuing mutes, kicks, or bans.", &gotgbot.EditMessageTextOpts{
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: getGroupModMarkup(),
+		})
+	} else if data == "gcfg:mod_ban" || data == "gcfg:mod_mute" || data == "gcfg:mod_kick" || data == "gcfg:mod_unban" {
+		_, _ = c.Answer(bot, nil)
+		actionName := "moderation action"
+		cmdFormat := "/ban"
+		switch data {
+		case "gcfg:mod_ban":
+			actionName = "ban"
+			cmdFormat = "/ban @username [reason]"
+		case "gcfg:mod_mute":
+			actionName = "mute"
+			cmdFormat = "/mute @username [duration]"
+		case "gcfg:mod_kick":
+			actionName = "kick"
+			cmdFormat = "/kick @username"
+		case "gcfg:mod_unban":
+			actionName = "unban"
+			cmdFormat = "/unban @username"
+		}
+		instr := fmt.Sprintf("<b>🔨 Moderation Instruction: %s</b>\n\nTo perform this action, please:\n• Reply to a user's message with <code>%s</code>\n• Or send command with username/ID:\n  └ <code>%s</code>", actionName, strings.Fields(cmdFormat)[0], cmdFormat)
+		_, _, _ = m.EditText(bot, instr, &gotgbot.EditMessageTextOpts{
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "Back 🔙", CallbackData: "gcfg:mod_menu"}}}},
+		})
+	} else if data == "gcfg:greetings_menu" {
+		_, _ = c.Answer(bot, nil)
+		_, _, _ = m.EditText(bot, "<b>📨 Welcome & Goodbye Settings</b>\n\nConfigure automated greeting and departure messages for the group.", &gotgbot.EditMessageTextOpts{
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: getGroupGreetingsMarkup(cfg),
+		})
+	} else if data == "gcfg:antispam_menu" {
+		_, _ = c.Answer(bot, nil)
+		_, _, _ = m.EditText(bot, "<b>🚫 Anti-Spam Control</b>\n\nRestrict message types or set flood limit thresholds.", &gotgbot.EditMessageTextOpts{
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: getGroupAntiSpamMarkup(cfg),
+		})
+	} else if data == "gcfg:settings_view" {
+		_, _ = c.Answer(bot, nil)
+
+		memberCount, _ := bot.GetChatMemberCount(chatID, nil)
+		locksStr := "None"
+		var activeLocks []string
+		for k, v := range cfg.Locks {
+			if v {
+				activeLocks = append(activeLocks, k)
+			}
+		}
+		if len(activeLocks) > 0 {
+			locksStr = strings.Join(activeLocks, ", ")
+		}
+
+		antiraidStatus := "Disabled"
+		if cfg.AntiRaidEnabled {
+			antiraidStatus = "Enabled"
+		}
+
+		captchaStatus := "Disabled"
+		if cfg.CaptchaEnabled {
+			captchaStatus = fmt.Sprintf("Enabled (%ds timeout)", cfg.CaptchaTime)
+		}
+
+		floodStatus := "Disabled"
+		if cfg.FloodLimit > 0 {
+			floodStatus = fmt.Sprintf("%d messages/5s", cfg.FloodLimit)
+		}
+
+		welcomeStatus := "Disabled"
+		if cfg.WelcomeEnabled {
+			welcomeStatus = "Enabled"
+		}
+
+		goodbyeStatus := "Disabled"
+		if cfg.GoodbyeEnabled {
+			goodbyeStatus = "Enabled"
+		}
+
+		text := fmt.Sprintf(`<b>📊 CURRENT GROUP CONFIGURATION</b>
+
+👥 <b>Total Members:</b> <code>%d</code>
+💬 <b>Messages Processed:</b> <code>%d</code>
+🔍 <b>Searches Performed:</b> <code>%d</code>
+
+🛡️ <b>Moderation Config:</b>
+├ <b>Warn Limit:</b> <code>%d</code> (Action: <code>%s</code>)
+├ <b>Antiflood:</b> <code>%s</code>
+├ <b>Anti-Raid:</b> <code>%s</code>
+├ <b>Captcha:</b> <code>%s</code>
+├ <b>Welcome:</b> <code>%s</code>
+├ <b>Goodbye:</b> <code>%s</code>
+└ <b>Active Locks:</b> <code>%s</code>`,
+			memberCount,
+			cfg.MessageCount,
+			cfg.SearchCount,
+			cfg.WarnLimit,
+			cfg.WarnMode,
+			floodStatus,
+			antiraidStatus,
+			captchaStatus,
+			welcomeStatus,
+			goodbyeStatus,
+			locksStr,
+		)
+		_, _, _ = m.EditText(bot, text, &gotgbot.EditMessageTextOpts{
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "Back 🔙", CallbackData: "gcfg:home"}}}},
 		})
 	} else if data == "gcfg:welcome_toggle" {
 		cfg.WelcomeEnabled = !cfg.WelcomeEnabled
 		_ = _app.DB.SaveGroupConfig(cfg)
 		_, _ = c.Answer(bot, nil)
-		_, _, _ = m.EditText(bot, "<b>⚙️ Group Settings Panel</b>\n\nConfigure welcome messages and content locks below.", &gotgbot.EditMessageTextOpts{
+		_, _, _ = m.EditText(bot, "<b>📨 Welcome & Goodbye Settings</b>\n\nConfigure automated greeting and departure messages for the group.", &gotgbot.EditMessageTextOpts{
 			ParseMode:   gotgbot.ParseModeHTML,
-			ReplyMarkup: getGroupSettingsMarkup(cfg),
+			ReplyMarkup: getGroupGreetingsMarkup(cfg),
+		})
+	} else if data == "gcfg:goodbye_toggle" {
+		cfg.GoodbyeEnabled = !cfg.GoodbyeEnabled
+		_ = _app.DB.SaveGroupConfig(cfg)
+		_, _ = c.Answer(bot, nil)
+		_, _, _ = m.EditText(bot, "<b>📨 Welcome & Goodbye Settings</b>\n\nConfigure automated greeting and departure messages for the group.", &gotgbot.EditMessageTextOpts{
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: getGroupGreetingsMarkup(cfg),
 		})
 	} else if data == "gcfg:welcome_edit" {
 		_, _ = c.Answer(bot, nil)
@@ -1138,10 +1320,10 @@ func GroupSettingsCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
 		if err == nil && groupChat != nil {
 			groupTitle = groupChat.Title
 		}
-		_, _ = bot.SendMessage(c.From.Id, fmt.Sprintf("Please send the welcome message you want to set for the group: <b>%s</b>\n\nUse {mention}, {title}, {first_name}, {id} as placeholders.", htmlEscape(groupTitle)), &gotgbot.SendMessageOpts{
+		_, _ = bot.SendMessage(c.From.Id, fmt.Sprintf("Please send the welcome message you want to set for the group: <b>%s</b>\n\nUse {mention}, {title}, {first_name}, {last_name}, {username}, {id} as placeholders.", htmlEscape(groupTitle)), &gotgbot.SendMessageOpts{
 			ParseMode: gotgbot.ParseModeHTML,
 		})
-		
+
 		var instr string
 		if m.Chat.Type == "private" {
 			instr = "📝 To update welcome message, run <code>/setwelcome &lt;text&gt;</code> here in PM."
@@ -1151,8 +1333,46 @@ func GroupSettingsCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
 		_, _, _ = m.EditText(bot, instr, &gotgbot.EditMessageTextOpts{
 			ParseMode: gotgbot.ParseModeHTML,
 			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "Back 🔙", CallbackData: "gcfg:home"}}},
+				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "Back 🔙", CallbackData: "gcfg:greetings_menu"}}},
 			},
+		})
+	} else if data == "gcfg:goodbye_edit" {
+		_, _ = c.Answer(bot, nil)
+		groupTitle := "the group"
+		groupChat, err := bot.GetChat(chatID, nil)
+		if err == nil && groupChat != nil {
+			groupTitle = groupChat.Title
+		}
+		_, _ = bot.SendMessage(c.From.Id, fmt.Sprintf("Please send the goodbye message you want to set for the group: <b>%s</b>\n\nUse {mention}, {title}, {first_name}, {last_name}, {username}, {id} as placeholders.", htmlEscape(groupTitle)), &gotgbot.SendMessageOpts{
+			ParseMode: gotgbot.ParseModeHTML,
+		})
+
+		var instr string
+		if m.Chat.Type == "private" {
+			instr = "📝 To update goodbye message, run <code>/setgoodbye &lt;text&gt;</code> here in PM."
+		} else {
+			instr = "📝 To update goodbye message, run <code>/setgoodbye &lt;text&gt;</code> in the group chat."
+		}
+		_, _, _ = m.EditText(bot, instr, &gotgbot.EditMessageTextOpts{
+			ParseMode: gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "Back 🔙", CallbackData: "gcfg:greetings_menu"}}},
+			},
+		})
+	} else if data == "gcfg:welcome_view" {
+		_, _ = c.Answer(bot, nil)
+		wText := cfg.WelcomeText
+		if wText == "" {
+			wText = "<i>None (Default welcome will be sent if enabled)</i>"
+		}
+		gText := cfg.GoodbyeText
+		if gText == "" {
+			gText = "<i>None</i>"
+		}
+		viewText := fmt.Sprintf("<b>📄 Current Greeting Messages:</b>\n\n• <b>Welcome Message:</b>\n%s\n\n• <b>Goodbye Message:</b>\n%s", wText, gText)
+		_, _, _ = m.EditText(bot, viewText, &gotgbot.EditMessageTextOpts{
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "Back 🔙", CallbackData: "gcfg:greetings_menu"}}}},
 		})
 	} else if data == "gcfg:locks_menu" {
 		_, _ = c.Answer(bot, nil)
@@ -1171,6 +1391,13 @@ func GroupSettingsCallback(bot *gotgbot.Bot, ctx *ext.Context) error {
 		_, _, _ = m.EditText(bot, "<b>🔒 Content Locks Panel</b>\n\nLock/Unlock message types for non-admin members.", &gotgbot.EditMessageTextOpts{
 			ParseMode:   gotgbot.ParseModeHTML,
 			ReplyMarkup: getGroupLocksMarkup(cfg),
+		})
+	} else if data == "gcfg:flood_limit_edit" {
+		_, _ = c.Answer(bot, nil)
+		instr := "<b>⏲️ Set Flood Limit:</b>\n\nTo change flood limits, run:\n• <code>/setflood &lt;limit&gt;</code> (e.g. <code>/setflood 5</code>) to mute users sending >5 messages in 5s.\n• <code>/setflood 0</code> to disable flood control."
+		_, _, _ = m.EditText(bot, instr, &gotgbot.EditMessageTextOpts{
+			ParseMode:   gotgbot.ParseModeHTML,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{{Text: "Back 🔙", CallbackData: "gcfg:antispam_menu"}}}},
 		})
 	} else if data == "gcfg:close" {
 		_, _ = c.Answer(bot, nil)
@@ -2211,3 +2438,135 @@ func SetAntiRaid(bot *gotgbot.Bot, ctx *ext.Context) error {
 	return err
 }
 
+// Goodbye message handler
+func HandleGoodbyeMessage(bot *gotgbot.Bot, ctx *ext.Context) error {
+	m := ctx.EffectiveMessage
+	if m == nil || m.LeftChatMember == nil {
+		return nil
+	}
+
+	cfg, err := _app.DB.GetGroupConfig(m.Chat.Id)
+	if err != nil || cfg == nil {
+		return nil
+	}
+
+	goodbyeEnabled := cfg.GoodbyeEnabled
+	goodbyeText := cfg.GoodbyeText
+
+	if !goodbyeEnabled || goodbyeText == "" {
+		return nil
+	}
+
+	user := m.LeftChatMember
+	mention := fmt.Sprintf("<a href=\"tg://user?id=%d\">%s</a>", user.Id, htmlEscape(user.FirstName))
+
+	text := goodbyeText
+	text = strings.ReplaceAll(text, "{mention}", mention)
+	text = strings.ReplaceAll(text, "{title}", htmlEscape(m.Chat.Title))
+	text = strings.ReplaceAll(text, "{first_name}", htmlEscape(user.FirstName))
+	text = strings.ReplaceAll(text, "{last_name}", htmlEscape(user.LastName))
+	text = strings.ReplaceAll(text, "{username}", htmlEscape(user.Username))
+	text = strings.ReplaceAll(text, "{id}", fmt.Sprint(user.Id))
+
+	_, err = bot.SendMessage(m.Chat.Id, text, &gotgbot.SendMessageOpts{
+		ParseMode: gotgbot.ParseModeHTML,
+	})
+	if err != nil {
+		_app.Log.Warn("failed to send goodbye message", zap.Error(err))
+	}
+
+	return nil
+}
+
+// /setgoodbye command
+func SetGoodbyeText(bot *gotgbot.Bot, ctx *ext.Context) error {
+	m := ctx.EffectiveMessage
+	if m == nil {
+		return nil
+	}
+	chatID, ok := resolveChatIDAndVerifyAdmin(bot, m)
+	if !ok {
+		return nil
+	}
+
+	goodbyeText := strings.TrimSpace(m.Text[len("/setgoodbye"):])
+	if goodbyeText == "" {
+		_, _ = m.Reply(bot, "Please provide the goodbye message text. Example: <code>/setgoodbye Goodbye {first_name}!</code>", &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+		return nil
+	}
+
+	cfg, err := _app.DB.GetGroupConfig(chatID)
+	if err != nil {
+		cfg = &model.GroupConfig{ChatID: chatID}
+	}
+	cfg.GoodbyeText = goodbyeText
+	cfg.GoodbyeEnabled = true
+
+	err = _app.DB.SaveGroupConfig(cfg)
+	if err != nil {
+		_, _ = m.Reply(bot, "Failed to save goodbye message.", nil)
+		return nil
+	}
+
+	_, err = m.Reply(bot, "✅ Goodbye message set and enabled successfully!", nil)
+	return err
+}
+
+// /cleargoodbye command
+func ClearGoodbyeText(bot *gotgbot.Bot, ctx *ext.Context) error {
+	m := ctx.EffectiveMessage
+	if m == nil {
+		return nil
+	}
+	chatID, ok := resolveChatIDAndVerifyAdmin(bot, m)
+	if !ok {
+		return nil
+	}
+
+	cfg, err := _app.DB.GetGroupConfig(chatID)
+	if err == nil && cfg != nil {
+		cfg.GoodbyeText = ""
+		cfg.GoodbyeEnabled = false
+		_ = _app.DB.SaveGroupConfig(cfg)
+	}
+
+	_, err = m.Reply(bot, "🗑️ Goodbye message text cleared and disabled.", nil)
+	return err
+}
+
+// /invitelink command
+func GetInviteLink(bot *gotgbot.Bot, ctx *ext.Context) error {
+	m := ctx.EffectiveMessage
+	if checkPrivateChat(bot, m) {
+		return nil
+	}
+
+	isAdmin, err := IsUserAdmin(bot, m.Chat.Id, m.From.Id)
+	if err != nil || !isAdmin {
+		return nil
+	}
+
+	// Try to get chat invite link, or create one if not available
+	chat, err := bot.GetChat(m.Chat.Id, nil)
+	if err != nil {
+		_, _ = m.Reply(bot, "Failed to fetch chat details.", nil)
+		return nil
+	}
+
+	link := chat.InviteLink
+	if link == "" {
+		// Try creating a new invite link
+		newLink, err := bot.ExportChatInviteLink(m.Chat.Id, nil)
+		if err == nil {
+			link = newLink
+		}
+	}
+
+	if link == "" {
+		_, _ = m.Reply(bot, "❌ Could not retrieve or generate invite link. Make sure the bot has admin rights to invite users.", nil)
+		return nil
+	}
+
+	_, err = m.Reply(bot, fmt.Sprintf("🔗 <b>Invite Link:</b> %s", link), &gotgbot.SendMessageOpts{ParseMode: gotgbot.ParseModeHTML})
+	return err
+}

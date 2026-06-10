@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"autofilterbot/internal/config"
+	"autofilterbot/internal/fsub"
 	"autofilterbot/internal/model"
 	"autofilterbot/pkg/conversation"
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -68,6 +69,9 @@ func AddToFsub(bot *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 
+	// Flush membership cache immediately so users are re-verified against
+	// the updated channel list, even before the async RefreshConfig completes.
+	fsub.ClearMembershipCache()
 	go _app.RefreshConfig()
 
 	ctx.CallbackQuery.Answer(bot, &gotgbot.AnswerCallbackQueryOpts{Text: "Added to Fsub Successfully! ✅"})

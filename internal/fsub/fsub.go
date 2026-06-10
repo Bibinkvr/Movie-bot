@@ -96,6 +96,12 @@ func CheckFsub(app appPreview, bot *gotgbot.Bot, ctx *ext.Context) (bool, error)
 
 	missing := GetMissingChannels(bot, app.GetDB(), userId, channels)
 	if len(missing) == 0 {
+		// User has joined all channels. Clean up any leftover fsub prompt
+		// that might still exist (e.g., from a previous session or race condition).
+		if oldMsgId, _ := app.GetDB().GetUserFsubMessage(userId); oldMsgId != 0 {
+			bot.DeleteMessage(userId, oldMsgId, nil)
+			app.GetDB().SetUserFsubMessage(userId, 0)
+		}
 		return true, nil
 	}
 
@@ -215,3 +221,15 @@ func CheckFsub(app appPreview, bot *gotgbot.Bot, ctx *ext.Context) (bool, error)
 func SetMembershipCache(userId, channelId int64, isMember bool) {
 	membershipCache.Set(userId, channelId, isMember, 60*time.Second)
 }
+
+// ClearMembershipCache flushes the entire membership cache.
+// Call this whenever Fsub channels are added, removed, or changed.
+func ClearMembershipCache() {
+	membershipCache.Clear()
+}
+
+// InvalidateChannelCache removes all cached entries for a specific channel.
+func InvalidateChannelCache(channelId int64) {
+	membershipCache.InvalidateChannel(channelId)
+}
+

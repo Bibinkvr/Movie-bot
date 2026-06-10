@@ -15,6 +15,7 @@ import (
 	"autofilterbot/internal/config"
 	"autofilterbot/internal/configpanel"
 	"autofilterbot/internal/database/mongo"
+	"autofilterbot/internal/fsub"
 	"autofilterbot/internal/index"
 	"autofilterbot/internal/middleware"
 	"autofilterbot/internal/ott"
@@ -246,6 +247,12 @@ func (core *Core) RefreshConfig() {
 	}
 
 	core.Config = c
+
+	// Flush the membership cache so users are re-checked against the
+	// new set of Fsub channels. Without this, stale cached entries
+	// cause the bot to silently skip enforcement on newly-added channels
+	// or keep enforcing removed channels.
+	fsub.ClearMembershipCache()
 }
 
 // RestartActiveIndexOperations restarts all active index operations.

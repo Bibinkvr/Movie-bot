@@ -5,7 +5,6 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"time"
 	"autofilterbot/internal/middleware"
 	"autofilterbot/pkg/conversation"
 	"autofilterbot/pkg/env"
@@ -16,6 +15,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/callbackquery"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
 	"go.uber.org/zap"
+	"time"
 )
 
 const (
@@ -66,7 +66,6 @@ func SetupDispatcher(log *zap.Logger) *ext.Dispatcher {
 	d.AddHandlerToGroup(handlers.NewMessage(func(msg *gotgbot.Message) bool {
 		return !strings.HasPrefix(msg.Text, "/") && !message.Command(msg)
 	}, HandleGroupLocks), autoReactionGroup-1)
-
 
 	d.AddHandlerToGroup(handlers.NewMessage(func(msg *gotgbot.Message) bool {
 		return !strings.HasPrefix(msg.Text, "/") && !message.Command(msg)
@@ -132,7 +131,10 @@ func SetupDispatcher(log *zap.Logger) *ext.Dispatcher {
 	d.AddHandlerToGroup(handlers.NewCommand("locks", ShowLocks), commandHandlerGroup)
 	d.AddHandlerToGroup(handlers.NewCommand("lock", LockCommand), commandHandlerGroup)
 	d.AddHandlerToGroup(handlers.NewCommand("unlock", UnlockCommand), commandHandlerGroup)
-	d.AddHandlerToGroup(exthandlers.NewCommands([]string{"gsettings", "groupsettings"}, GroupSettings), commandHandlerGroup)
+	d.AddHandlerToGroup(exthandlers.NewCommands([]string{"gsettings", "groupsettings", "groupmanage"}, GroupSettings), commandHandlerGroup)
+	d.AddHandlerToGroup(handlers.NewCommand("setgoodbye", SetGoodbyeText), commandHandlerGroup)
+	d.AddHandlerToGroup(handlers.NewCommand("cleargoodbye", ClearGoodbyeText), commandHandlerGroup)
+	d.AddHandlerToGroup(handlers.NewCommand("invitelink", GetInviteLink), commandHandlerGroup)
 
 	// Administration
 	d.AddHandlerToGroup(handlers.NewCommand("promote", PromoteUser), commandHandlerGroup)
@@ -167,7 +169,6 @@ func SetupDispatcher(log *zap.Logger) *ext.Dispatcher {
 	d.AddHandlerToGroup(handlers.NewCommand("antiraid", SetAntiRaid), commandHandlerGroup)
 
 	d.AddHandlerToGroup(handlers.NewMessage(message.All, AutoDetectIndex), miscHandlerGroup)
-
 
 	d.AddHandlerToGroup(handlers.NewCallback(callbackquery.Prefix("cmd"), StaticCommands), callbackQueryGroup)
 	d.AddHandlerToGroup(handlers.NewCallback(callbackquery.Prefix("admin"), AdminCallbackHandler), callbackQueryGroup)
@@ -207,9 +208,9 @@ func SetupDispatcher(log *zap.Logger) *ext.Dispatcher {
 
 	d.AddHandlerToGroup(handlers.NewMessage(IsMonitoredChannel, NewFile).SetAllowChannel(true).SetAllowEdited(true), miscHandlerGroup)
 	d.AddHandlerToGroup(handlers.NewMessage(message.NewChatMembers, HandleWelcomeMessage), miscHandlerGroup)
+	d.AddHandlerToGroup(handlers.NewMessage(message.LeftChatMember, HandleGoodbyeMessage), miscHandlerGroup)
 	d.AddHandlerToGroup(handlers.NewChatJoinRequest(func(cjr *gotgbot.ChatJoinRequest) bool { return true }, HandleJoinRequest), joinRequestGroup)
 	d.AddHandlerToGroup(handlers.NewChatMember(func(cm *gotgbot.ChatMemberUpdated) bool { return true }, HandleChatMember), joinRequestGroup)
-
 
 	d.AddHandlerToGroup(handlers.NewInlineQuery(func(iq *gotgbot.InlineQuery) bool { return true }, InlineSearch), miscHandlerGroup)
 	d.AddHandlerToGroup(handlers.NewCallback(callbackquery.Prefix("sendfile"), SendFileCallback), callbackQueryGroup)

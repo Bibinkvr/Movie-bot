@@ -208,8 +208,21 @@ func FsubJoined(bot *gotgbot.Bot, ctx *ext.Context) error {
 		ShowAlert: false,
 	})
 
-	// Delete the fsub message
-	_, _ = c.Message.Delete(bot, nil)
+	// Delete the fsub prompt message.
+	// Use bot.DeleteMessage with the DB-stored ID for reliability,
+	// since c.Message may be a MaybeInaccessibleMessage that cannot
+	// be deleted directly. Also clear the DB record so CheckFsub
+	// won't try to edit a deleted message later.
+	msgId, _ := _app.DB.GetUserFsubMessage(userId)
+	if msgId != 0 {
+		_, _ = bot.DeleteMessage(userId, msgId, nil)
+		_app.DB.SetUserFsubMessage(userId, 0)
+	} else {
+		// Fallback: try deleting via the callback message itself
+		if c.Message != nil {
+			_, _ = bot.DeleteMessage(c.Message.GetChat().Id, c.Message.GetMessageId(), nil)
+		}
+	}
 
 	return ResumeUserAction(bot, ctx, userId)
 }

@@ -43,6 +43,26 @@ func (c *FsubCache) Get(userId int64, channelId int64) (bool, bool) {
 	return entry.isMember, true
 }
 
+// Clear flushes all cached membership entries.
+// Must be called whenever Fsub channels are added/removed/changed.
+func (c *FsubCache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.items = make(map[string]cacheEntry)
+}
+
+// InvalidateChannel removes all cached entries for a specific channel.
+func (c *FsubCache) InvalidateChannel(channelId int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	suffix := fmt.Sprintf(":%d", channelId)
+	for key := range c.items {
+		if len(key) > len(suffix) && key[len(key)-len(suffix):] == suffix {
+			delete(c.items, key)
+		}
+	}
+}
+
 // AntiSpamCache tracks users warned in group chats
 type AntiSpamCache struct {
 	mu    sync.RWMutex
