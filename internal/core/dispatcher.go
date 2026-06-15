@@ -54,9 +54,21 @@ func SetupDispatcher(log *zap.Logger) *ext.Dispatcher {
 		},
 	})
 
+	isAdminFunc := func(userId int64) bool {
+		if _app == nil {
+			return false
+		}
+		for _, adminId := range _app.Admins {
+			if adminId == userId {
+				return true
+			}
+		}
+		return false
+	}
+
 	// 0. Global Middlewares
-	d.AddHandlerToGroup(handlers.NewMessage(message.All, middleware.AntiSpam(5*time.Second)), antiSpamGroup)
-	d.AddHandlerToGroup(handlers.NewCallback(callbackquery.All, middleware.AntiSpam(2*time.Second)), antiSpamGroup)
+	d.AddHandlerToGroup(handlers.NewMessage(message.All, middleware.AntiSpam(1500*time.Millisecond, isAdminFunc)), antiSpamGroup)
+	d.AddHandlerToGroup(handlers.NewCallback(callbackquery.All, middleware.AntiSpam(1000*time.Millisecond, isAdminFunc)), antiSpamGroup)
 
 	// Intercept group locks before message auto reactions or conversations are processed
 	d.AddHandlerToGroup(handlers.NewMessage(func(msg *gotgbot.Message) bool {

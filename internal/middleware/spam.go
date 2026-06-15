@@ -14,10 +14,14 @@ var (
 )
 
 // AntiSpam prevents users from making requests too frequently.
-func AntiSpam(cooldown time.Duration) func(bot *gotgbot.Bot, ctx *ext.Context) error {
+func AntiSpam(cooldown time.Duration, isAdmin func(int64) bool) func(bot *gotgbot.Bot, ctx *ext.Context) error {
 	return func(bot *gotgbot.Bot, ctx *ext.Context) error {
 		userId := ctx.EffectiveUser.Id
 		
+		if isAdmin != nil && isAdmin(userId) {
+			return nil // Bypass rate-limiting for admins
+		}
+
 		cooldownMu.RLock()
 		lastSeen, exists := userCooldowns[userId]
 		cooldownMu.RUnlock()
