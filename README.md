@@ -345,6 +345,11 @@ The bot includes a built-in health check HTTP server that listens on the `PORT` 
 #### Memory Optimizations for Render Free Tier
 The bot includes a memory recycler routine (`debug.FreeOSMemory()` every 5 minutes and `debug.SetGCPercent(50)`) designed specifically to keep the RAM footprint under Render's **512MB free-tier limit**.
 
+## Credits
+
+- [Bibinkvr](https://github.com/Bibinkvr)
+- [AiBudha](https://github.com/AiBudha)
+
 ## License
 
 All data handled by the bot is the responsibility of the user. This project is provided as-is.
