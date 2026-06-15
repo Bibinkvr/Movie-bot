@@ -899,6 +899,20 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 		IsSeries bool
 		Count    int
 	}
+	// Helper to generate a normalized group key
+	getGroupKey := func(baseTitle, year string) string {
+		lower := strings.ToLower(baseTitle)
+		var sb strings.Builder
+		for _, r := range lower {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				sb.WriteRune(r)
+			}
+		}
+		cleanTitle := sb.String()
+		cleanTitle = strings.TrimRight(cleanTitle, "0123456789")
+		return cleanTitle + "_" + year
+	}
+
 	seen := make(map[string]*titleGroup)
 	var orderedTitles []string
 
@@ -917,15 +931,16 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 			}
 		}
 
-		key := strings.ToLower(baseTitle)
-		if year != "" {
-			key += "_" + year
-		}
+		key := getGroupKey(baseTitle, year)
 
 		if g, ok := seen[key]; ok {
 			g.Count++
 			if !g.IsSeries && isSeries {
 				g.IsSeries = true
+			}
+			// Keep the cleaner title (e.g. without trailing " 1" or similar) if found
+			if !isSeries && regexp.MustCompile(`(?i)\s+0?1$`).MatchString(g.Title) && !regexp.MustCompile(`(?i)\s+0?1$`).MatchString(baseTitle) {
+				g.Title = baseTitle
 			}
 		} else {
 			seen[key] = &titleGroup{
@@ -961,10 +976,7 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 					year = match
 				}
 			}
-			fileKey := strings.ToLower(baseTitle)
-			if year != "" {
-				fileKey += "_" + year
-			}
+			fileKey := getGroupKey(baseTitle, year)
 			if fileKey == key {
 				groupFiles = append(groupFiles, f)
 			}
@@ -986,8 +998,11 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		displayTitle := g.Title
+		if !g.IsSeries {
+			displayTitle = regexp.MustCompile(`(?i)\s+0?1$`).ReplaceAllString(displayTitle, "")
+		}
 		if !g.IsSeries && g.Year != "" {
-			displayTitle = fmt.Sprintf("%s (%s)", g.Title, g.Year)
+			displayTitle = fmt.Sprintf("%s (%s)", displayTitle, g.Year)
 		}
 		description := fmt.Sprintf("📂 %s • %d files available", mediaType, len(groupAllFiles))
 
@@ -995,8 +1010,11 @@ func InlineSearch(bot *gotgbot.Bot, ctx *ext.Context) error {
 		uniqueId := functions.RandString(15)
 
 		specificQuery := g.Title
+		if !g.IsSeries {
+			specificQuery = regexp.MustCompile(`(?i)\s+0?1$`).ReplaceAllString(specificQuery, "")
+		}
 		if !g.IsSeries && g.Year != "" {
-			specificQuery = g.Title + " " + g.Year
+			specificQuery = specificQuery + " " + g.Year
 		}
 		var posterUrl string
 		if _app.Config.GetPosterEnabled() {

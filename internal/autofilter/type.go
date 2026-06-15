@@ -261,6 +261,12 @@ func DetectLanguages(files []File) []string {
 // ExtractBaseTitle extracts the clean base title from a filename by removing
 // quality tags, season/episode patterns, file extensions, and formatting artifacts.
 func ExtractBaseTitle(name string) string {
+	// Insert space between 4-digit years and adjacent letters (e.g. 2019english -> 2019 english)
+	yearLetterRegex := regexp.MustCompile(`(?i)\b((?:19|20)\d{2})([a-zA-Z])`)
+	name = yearLetterRegex.ReplaceAllString(name, "$1 $2")
+	letterYearRegex := regexp.MustCompile(`(?i)([a-zA-Z])((?:19|20)\d{2})\b`)
+	name = letterYearRegex.ReplaceAllString(name, "$1 $2")
+
 	name = functions.CleanPromoFromName(name)
 	// Remove leading brackets/parentheses and promotional prefixes completely (e.g. [Cc], [Govt], Cc)
 	bracketRegex := regexp.MustCompile(`^(?i)(?:\[[^\]]+\]|\([^\)]+\))\s*`)

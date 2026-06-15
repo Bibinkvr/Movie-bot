@@ -21,11 +21,21 @@ var (
 // CleanQueryForPoster removes season, episode, and quality indicators from the search query.
 func CleanQueryForPoster(query string) string {
 	lower := strings.ToLower(query)
+
+	// Insert space between 4-digit years and adjacent letters (e.g., 2019english -> 2019 english)
+	yearLetterRegex := regexp.MustCompile(`\b((?:19|20)\d{2})([a-zA-Z])`)
+	lower = yearLetterRegex.ReplaceAllString(lower, "$1 $2")
+	letterYearRegex := regexp.MustCompile(`([a-zA-Z])((?:19|20)\d{2})\b`)
+	lower = letterYearRegex.ReplaceAllString(lower, "$1 $2")
+
 	// Remove season/episode indicators
 	lower = seasonEpisodeRegex.ReplaceAllString(lower, " ")
 	lower = seasonOnlyRegex.ReplaceAllString(lower, " ")
 	// Remove quality tags
 	lower = qualityRegex.ReplaceAllString(lower, " ")
+	// Remove language tags
+	langRegex := regexp.MustCompile(`(?i)\b(hindi|hin|english|eng|tamil|tam|telugu|tel|malayalam|mal|kannada|kan|bengali|ben|marathi|mar|bhojpuri|punjabi|pun|gujarati|guj|multi|dual|dubbed|dub|sub|subs|esub|esubs)\b`)
+	lower = langRegex.ReplaceAllString(lower, " ")
 	// Replace non-alphanumeric with spaces, except colon/apostrophe
 	r := regexp.MustCompile(`[\.\-_\(\)\[\]\{\}\+\*]`)
 	lower = r.ReplaceAllString(lower, " ")
@@ -436,62 +446,67 @@ func GetSeasonPosterUrl(query string, season int) string {
 
 
 // titleMatchesQuery checks whether the API result title is a valid match for the user's search query.
-// All words from the query (except 4-digit years) must appear in the title.
 func titleMatchesQuery(title, query string) bool {
 	if title == "" {
 		return false
 	}
-	titleLower := strings.ToLower(title)
-	queryLower := strings.ToLower(query)
 
-	rawQueryWords := strings.Fields(queryLower)
-	rawTitleWords := strings.Fields(titleLower)
+	clean := func(s string) string {
+		s = strings.ToLower(s)
+		// remove years
+		yearRegex := regexp.MustCompile(`\b(19|20)\d{2}\b`)
+		s = yearRegex.ReplaceAllString(s, "")
 
-	yearRegex := regexp.MustCompile(`^(19|20)\d{2}$`)
-
-	// Filter out years from query words, unless the query contains ONLY years
-	var queryWords []string
-	for _, w := range rawQueryWords {
-		if !yearRegex.MatchString(w) {
-			queryWords = append(queryWords, w)
-		}
-	}
-	if len(queryWords) == 0 {
-		queryWords = rawQueryWords
-	}
-
-	// Filter out years from title words, unless the title contains ONLY years
-	var titleWords []string
-	for _, w := range rawTitleWords {
-		if !yearRegex.MatchString(w) {
-			titleWords = append(titleWords, w)
-		}
-	}
-	if len(titleWords) == 0 {
-		titleWords = rawTitleWords
-	}
-
-	// All query words must be present in the title
-	for _, qw := range queryWords {
-		found := false
-		for _, tw := range titleWords {
-			if tw == qw {
-				found = true
-				break
+		var sb strings.Builder
+		for _, r := range s {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				sb.WriteRune(r)
 			}
 		}
-		if !found {
+		return sb.String()
+	}
+
+	cleanTitle := clean(title)
+	cleanQuery := clean(query)
+
+	if cleanTitle == "" || cleanQuery == "" {
+		return false
+	}
+
+	// Ensure that if the query contains any digit > 1, that digit must also be present in the title
+	for r := '2'; r <= '9'; r++ {
+		if strings.ContainsRune(cleanQuery, r) && !strings.ContainsRune(cleanTitle, r) {
 			return false
 		}
 	}
 
-	// Title must not have significantly more words than the query (prevents partial match to longer titles)
-	// Allow up to 3 extra words (for articles, subtitles, etc.)
-	if len(titleWords) > len(queryWords)+3 {
-		return false
+	// If they match exactly or one is a substring of the other
+	if cleanTitle == cleanQuery {
+		return true
 	}
 
-	return true
+	// Handle "spiderman 1" -> "spiderman" case
+	// If query has a trailing "1", e.g., "spiderman1", check if stripping "1" matches the title
+	if strings.HasSuffix(cleanQuery, "1") && cleanTitle == strings.TrimSuffix(cleanQuery, "1") {
+		return true
+	}
+
+	// Check if the query is a substring of the title
+	// To avoid false positives, we want to make sure the query is not too short.
+	if strings.Contains(cleanTitle, cleanQuery) {
+		if len(cleanQuery) >= 4 {
+			return true
+		}
+	}
+
+	// Check if title is a substring of the query
+	if strings.Contains(cleanQuery, cleanTitle) {
+		if len(cleanTitle) >= 4 {
+			return true
+		}
+	}
+
+	return false
 }
 
 // GetSearchSuggestions queries TMDB and OMDB in parallel to find up to 5 matching movie/series titles (clean titles).
