@@ -191,9 +191,15 @@ func (m *Manager) processExpired() {
 					success = true
 					break
 				}
-				// If message already deleted or forbidden, stop retrying
-				if strings.Contains(err.Error(), "message to delete not found") ||
-					strings.Contains(err.Error(), "message can't be deleted") {
+				// If message already deleted, chat is inaccessible, or action is forbidden, stop retrying and remove from DB
+				errStr := strings.ToLower(err.Error())
+				if strings.Contains(errStr, "not found") ||
+					strings.Contains(errStr, "can't be deleted") ||
+					strings.Contains(errStr, "upgraded") ||
+					strings.Contains(errStr, "kicked") ||
+					strings.Contains(errStr, "forbidden") ||
+					strings.Contains(errStr, "deactivated") ||
+					strings.Contains(errStr, "not a member") {
 					success = true // Treat as handled
 					break
 				}
