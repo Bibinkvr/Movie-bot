@@ -81,16 +81,23 @@ func StaticCommands(bot *gotgbot.Bot, ctx *ext.Context) error {
 		start := time.Now()
 		_, _ = bot.GetMe(nil)
 		lat := time.Since(start)
+
+		var totalUsers int64
+		if dbStats, err := _app.DB.Stats(); err == nil && dbStats != nil {
+			totalUsers = dbStats.Users
+		}
+
 		extraValues = map[string]any{
-			"os":         runtime.GOOS,
-			"database":   _app.DB.GetName(),
-			"latency":    fmt.Sprintf("%.2fms", float64(lat.Microseconds())/1000.0),
-			"go_version": runtime.Version(),
-			"cpu":        func() string { if p, err := cpu.Percent(0, false); err == nil && len(p) > 0 { return fmt.Sprintf("%.2f%%", p[0]) } else { return "N/A" } }(),
-			"ram":        func() string { if v, err := mem.VirtualMemory(); err == nil { return fmt.Sprintf("%.2f%%", v.UsedPercent) } else { return "N/A" } }(),
-			"bot_ram":    func() string { var m runtime.MemStats; runtime.ReadMemStats(&m); return fmt.Sprintf("%.2f MB", float64(m.Alloc)/(1024*1024)) }(),
-			"free":       func() string { if d, err := disk.Usage("."); err == nil { return fmt.Sprintf("%.2fGB", float64(d.Free)/(1<<30)) } else { return "N/A" } }(),
-			"uptime":    time.Since(_app.GetStartTime()).Truncate(time.Second).String(),
+			"os":          runtime.GOOS,
+			"database":    _app.DB.GetName(),
+			"latency":     fmt.Sprintf("%.2fms", float64(lat.Microseconds())/1000.0),
+			"go_version":  runtime.Version(),
+			"cpu":         func() string { if p, err := cpu.Percent(0, false); err == nil && len(p) > 0 { return fmt.Sprintf("%.2f%%", p[0]) } else { return "N/A" } }(),
+			"ram":         func() string { if v, err := mem.VirtualMemory(); err == nil { return fmt.Sprintf("%.2f%%", v.UsedPercent) } else { return "N/A" } }(),
+			"bot_ram":     func() string { var m runtime.MemStats; runtime.ReadMemStats(&m); return fmt.Sprintf("%.2f MB", float64(m.Alloc)/(1024*1024)) }(),
+			"free":        func() string { if d, err := disk.Usage("."); err == nil { return fmt.Sprintf("%.2fGB", float64(d.Free)/(1<<30)) } else { return "N/A" } }(),
+			"uptime":      time.Since(_app.GetStartTime()).Truncate(time.Second).String(),
+			"total_users": totalUsers,
 		}
 	case "help":
 		msg = _app.Config.GetHelpMessage()
